@@ -1,0 +1,2 @@
+fn(State<AppState>, axum::extract::Path<Uuid>) -> impl std::future::Future<Output = Json<Option<{type error}>>> {get_file}
+fn(State<AppState>, axum::extract::Path<Uuid>) -> impl std::future::Future<Output = Json<Option<{type error}>>> {get_file}: Handler<_, _>

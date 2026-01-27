@@ -1,0 +1,14 @@
+/home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/deps/serde-d4e54965ca8acc3e.d: /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/build/serde-b65c2ec46daba802/out/private.rs
+
+/home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/deps/libserde-d4e54965ca8acc3e.rlib: /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/build/serde-b65c2ec46daba802/out/private.rs
+
+/home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/deps/libserde-d4e54965ca8acc3e.rmeta: /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/build/serde-b65c2ec46daba802/out/private.rs
+
+/home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/codeguru/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/build/serde-b65c2ec46daba802/out/private.rs:
+
+# env-dep:OUT_DIR=/home/codeguru/stellar-one-click-playground/api/hello-soroban/target/release/build/serde-b65c2ec46daba802/out
