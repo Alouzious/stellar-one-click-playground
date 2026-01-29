@@ -5,9 +5,11 @@ mod state;
 use tokio::net::TcpListener;
 
 use crate::state::AppState;
+use dotenvy::dotenv;
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
     tracing_subscriber::fmt::init();
     let state = AppState::new();
     let app = app::create_router(state);
