@@ -9,7 +9,7 @@ use crate::state::AppState;
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    let state = AppState::default();
+    let state = AppState::new();
     let app = app::create_router(state);
 
 

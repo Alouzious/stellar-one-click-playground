@@ -1,2 +1,0 @@
-fn(axum::extract::Path<Uuid>, State<AppState>) -> impl std::future::Future<Output = axum::Json<std::option::Option<FileModel>>> {get_file}
-fn(axum::extract::Path<Uuid>, State<AppState>) -> impl std::future::Future<Output = axum::Json<std::option::Option<FileModel>>> {get_file}: Handler<_, _>
