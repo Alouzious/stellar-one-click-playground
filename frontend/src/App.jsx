@@ -3,7 +3,16 @@ import { supabase } from "./supabaseClient";
 import ErrorBoundary from "./components/ErrorBoundary";
 import FileSidebar from "./components/FileSidebar";
 import ContractEditor from "./components/ContractEditor";
+import BuildPanel from "./components/BuildPanel";
+import Terminal from "./components/Terminal";
 import { defaultTemplates } from "./defaultTemplates";
+import {
+  buildContract,
+  testContract,
+  deployContract,
+  parseBuildLogs,
+  getWasmSize,
+} from "./utils/buildApi";
 import {
   validateFileName,
   normalizeFileName,
@@ -23,6 +32,7 @@ export default function App() {
   const [loggingIn, setLoggingIn] = useState(true);
   const [files, setFiles] = useState([]);
   const [activePath, setActivePath] = useState(null);
+  const [projectId, setProjectId] = useState(null);
 
   const [savingMap, setSavingMap] = useState({});
   const [savedMap, setSavedMap] = useState({});
@@ -33,7 +43,14 @@ export default function App() {
   const [isCreatingFile, setIsCreatingFile] = useState(false);
   const [isDeletingFile, setIsDeletingFile] = useState(null);
   const [isRenamingFile, setIsRenamingFile] = useState(null);
-  const [showUploadDialog, setShowUploadDialog] = useState(false);
+
+  // Build/Test/Deploy states
+  const [isBuilding, setIsBuilding] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [lastBuildStatus, setLastBuildStatus] = useState(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalLogs, setTerminalLogs] = useState([]);
 
   const avatarRef = useRef(null);
   const saveTimeoutRef = useRef({});
@@ -54,6 +71,19 @@ export default function App() {
   // Warn before leaving with unsaved changes
   useBeforeUnload(hasUnsavedChanges);
 
+  // Add terminal log helper
+  const addLog = useCallback((text, type = 'default', prefix = '>') => {
+    setTerminalLogs(prev => [
+      ...prev,
+      {
+        text,
+        type,
+        prefix,
+        timestamp: new Date().toISOString(),
+      }
+    ]);
+  }, []);
+
   // Keyboard shortcuts
   useKeyboardShortcuts([
     {
@@ -69,7 +99,6 @@ export default function App() {
       ctrlKey: true,
       callback: (e) => {
         e.preventDefault();
-        // File is auto-saved, just show notification
         if (activeFile) {
           const key = fileKey(activeFile);
           if (!savingMap[key]) {
@@ -79,21 +108,19 @@ export default function App() {
       },
     },
     {
-      key: "d",
+      key: "b",
       ctrlKey: true,
       callback: (e) => {
         e.preventDefault();
-        if (activeFile) {
-          downloadFile(activeFile);
-        }
+        handleBuild();
       },
     },
     {
-      key: "o",
+      key: "t",
       ctrlKey: true,
       callback: (e) => {
         e.preventDefault();
-        setShowUploadDialog(true);
+        handleTest();
       },
     },
   ]);
@@ -137,23 +164,106 @@ export default function App() {
     else {
       setFiles([]);
       setActivePath(null);
+      setProjectId(null);
       setSavingMap({});
       setSavedMap({});
       setLastSavedMap({});
       setErrorMap({});
+      setTerminalLogs([]);
+      setLastBuildStatus(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Load files for user
-  async function loadFiles() {
+  // Load or create project for user
+  async function ensureProjectStructureForUser() {
     if (!user) return;
+    
+    try {
+      addLog("Initializing project...", "info", "ℹ");
+
+      // Check if user has a project
+      const { data: existingProjects, error: fetchError } = await supabase
+        .from("projects")
+        .select("*")
+        .eq("user_id", user.id)
+        .limit(1);
+
+      if (fetchError) throw fetchError;
+
+      let project;
+      
+      if (existingProjects && existingProjects.length > 0) {
+        project = existingProjects[0];
+        addLog(`Loaded project: ${project.name}`, "success", "✓");
+      } else {
+        // Create new project
+        const { data: newProject, error: createError } = await supabase
+          .from("projects")
+          .insert([{
+            user_id: user.id,
+            name: `${user.email?.split('@')[0] || 'user'}-soroban-project`,
+          }])
+          .select()
+          .single();
+
+        if (createError) throw createError;
+        
+        project = newProject;
+        addLog(`Created new project: ${project.name}`, "success", "✓");
+      }
+
+      setProjectId(project.id);
+
+      // Load files for this project
+      const { data: existingFiles, error: filesError } = await supabase
+        .from("files")
+        .select("*")
+        .eq("project_id", project.id);
+
+      if (filesError) throw filesError;
+
+      const existingPaths = new Set((existingFiles || []).map((r) => r.path));
+
+      // Insert template files if they don't exist
+      const toInsert = defaultTemplates
+        .filter((t) => !existingPaths.has(t.path))
+        .map((t) => ({
+          user_id: user.id,
+          project_id: project.id,
+          name: t.name,
+          path: t.path,
+          language: t.language,
+          content: t.content,
+        }));
+
+      if (toInsert.length > 0) {
+        const { error: insertErr } = await supabase
+          .from("files")
+          .insert(toInsert);
+          
+        if (insertErr) throw insertErr;
+        addLog(`Created ${toInsert.length} template files`, "success", "✓");
+      }
+
+      await loadFiles(project.id);
+      addLog("Project ready!", "success", "✓");
+    } catch (error) {
+      console.error("Error setting up project:", error);
+      addLog(`Error: ${error.message}`, "error", "✗");
+      alert("Failed to set up project structure. Please try again.");
+    }
+  }
+
+  // Load files for project
+  async function loadFiles(projId) {
+    if (!user || !projId) return;
     
     try {
       const { data, error } = await supabase
         .from("files")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("project_id", projId)
         .order("path");
         
       if (error) throw error;
@@ -176,48 +286,120 @@ export default function App() {
       }
     } catch (error) {
       console.error("Error loading files:", error);
+      addLog(`Error loading files: ${error.message}`, "error", "✗");
       alert("Failed to load files. Please refresh the page.");
     }
   }
 
-  // Ensure project skeleton
-  async function ensureProjectStructureForUser() {
-    if (!user) return;
-    
-    try {
-      const { data: existing, error: fetchErr } = await supabase
-        .from("files")
-        .select("path")
-        .eq("user_id", user.id);
-        
-      if (fetchErr) throw fetchErr;
-      
-      const existingPaths = new Set((existing || []).map((r) => r.path));
-
-      const toInsert = defaultTemplates
-        .filter((t) => !existingPaths.has(t.path))
-        .map((t) => ({
-          user_id: user.id,
-          name: t.name,
-          path: t.path,
-          language: t.language,
-          content: t.content,
-        }));
-
-      if (toInsert.length > 0) {
-        const { error: insertErr } = await supabase
-          .from("files")
-          .insert(toInsert);
-          
-        if (insertErr) throw insertErr;
-      }
-
-      await loadFiles();
-    } catch (error) {
-      console.error("Error setting up project:", error);
-      alert("Failed to set up project structure. Please try again.");
+  // Build handler
+  const handleBuild = async () => {
+    if (!projectId) {
+      alert("No project selected");
+      return;
     }
-  }
+
+    setIsBuilding(true);
+    setTerminalOpen(true);
+    addLog("Starting build...", "info", "🔨");
+
+    try {
+      const result = await buildContract(projectId);
+      
+      // Parse and display logs
+      const parsedLogs = parseBuildLogs(result.logs);
+      parsedLogs.forEach(log => {
+        addLog(log.text, log.type, log.type === 'error' ? '✗' : log.type === 'success' ? '✓' : '>');
+      });
+
+      if (result.success) {
+        const size = getWasmSize(result.wasm_base64);
+        addLog(`Build successful! WASM size: ${size}`, "success", "✓");
+        setLastBuildStatus({
+          success: true,
+          size,
+          wasmBase64: result.wasm_base64,
+        });
+      } else {
+        addLog("Build failed. Check logs above for details.", "error", "✗");
+        setLastBuildStatus({
+          success: false,
+        });
+      }
+    } catch (error) {
+      console.error("Build error:", error);
+      addLog(`Build error: ${error.message}`, "error", "✗");
+      setLastBuildStatus({
+        success: false,
+      });
+    } finally {
+      setIsBuilding(false);
+    }
+  };
+
+  // Test handler
+  const handleTest = async () => {
+    if (!projectId) {
+      alert("No project selected");
+      return;
+    }
+
+    setIsTesting(true);
+    setTerminalOpen(true);
+    addLog("Running tests...", "info", "🧪");
+
+    try {
+      const result = await testContract(projectId);
+      
+      const parsedLogs = parseBuildLogs(result.logs);
+      parsedLogs.forEach(log => {
+        addLog(log.text, log.type, log.type === 'error' ? '✗' : log.type === 'success' ? '✓' : '>');
+      });
+
+      if (result.success) {
+        addLog("All tests passed!", "success", "✓");
+      } else {
+        addLog("Tests failed. Check logs above for details.", "error", "✗");
+      }
+    } catch (error) {
+      console.error("Test error:", error);
+      addLog(`Test error: ${error.message}`, "error", "✗");
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  // Deploy handler
+  const handleDeploy = async () => {
+    if (!projectId) {
+      alert("No project selected");
+      return;
+    }
+
+    if (!lastBuildStatus?.success || !lastBuildStatus?.wasmBase64) {
+      alert("Please build successfully first");
+      return;
+    }
+
+    setIsDeploying(true);
+    setTerminalOpen(true);
+    addLog("Deploying to Stellar testnet...", "info", "🚀");
+
+    try {
+      const result = await deployContract(projectId, lastBuildStatus.wasmBase64);
+      
+      if (result.success) {
+        addLog(`Contract deployed successfully!`, "success", "✓");
+        addLog(`Contract ID: ${result.contract_id}`, "info", "ℹ");
+      } else {
+        addLog("Deploy failed. Check logs above for details.", "error", "✗");
+      }
+    } catch (error) {
+      console.error("Deploy error:", error);
+      addLog(`Deploy error: ${error.message}`, "error", "✗");
+    } finally {
+      setIsDeploying(false);
+    }
+  };
 
   // Auth actions
   const signInWithGoogle = async () => {
@@ -240,10 +422,13 @@ export default function App() {
       await supabase.auth.signOut();
       setFiles([]);
       setActivePath(null);
+      setProjectId(null);
       setSavingMap({});
       setSavedMap({});
       setLastSavedMap({});
       setErrorMap({});
+      setTerminalLogs([]);
+      setLastBuildStatus(null);
     } catch (error) {
       console.error("Sign out error:", error);
       alert("Failed to sign out. Please try again.");
@@ -253,9 +438,9 @@ export default function App() {
   // Helpers
   const fileKey = (f) => f?.id || f?.path;
 
-  // Create new file with improved validation
+  // Create new file
   const handleNewFile = async () => {
-    if (!user) {
+    if (!user || !projectId) {
       alert("Please sign in first.");
       return;
     }
@@ -267,7 +452,6 @@ export default function App() {
 
     name = name.trim();
 
-    // Validate file name
     const validationError = validateFileName(name);
     if (validationError) {
       alert(validationError);
@@ -276,7 +460,6 @@ export default function App() {
 
     name = normalizeFileName(name);
 
-    // Check if file already exists
     if (files.find((f) => f.name === name)) {
       alert("A file with this name already exists!");
       return;
@@ -292,7 +475,8 @@ export default function App() {
       const { data, error } = await supabase
         .from("files")
         .insert([{ 
-          user_id: user.id, 
+          user_id: user.id,
+          project_id: projectId,
           name, 
           path, 
           language: lang, 
@@ -312,18 +496,21 @@ export default function App() {
         if (data[0].updated_at) {
           setLastSavedMap((m) => ({ ...m, [key]: data[0].updated_at }));
         }
+
+        addLog(`Created file: ${name}`, "success", "✓");
       }
     } catch (error) {
       console.error("Error creating file:", error);
+      addLog(`Error creating file: ${error.message}`, "error", "✗");
       alert("Failed to create file. Please try again.");
     } finally {
       setIsCreatingFile(false);
     }
   };
 
-  // Delete file with loading state
+  // Delete file
   const handleDeleteFile = async (path) => {
-    if (!user) return;
+    if (!user || !projectId) return;
     
     if (protectedPaths.has(path)) {
       alert("This file is protected and cannot be deleted.");
@@ -347,7 +534,6 @@ export default function App() {
 
       if (error) throw error;
 
-      // Clean up
       const key = fileKey(file);
       if (saveTimeoutRef.current[key]) {
         clearTimeout(saveTimeoutRef.current[key]);
@@ -384,17 +570,20 @@ export default function App() {
       if (newFiles.length === 0) {
         setActivePath(null);
       }
+
+      addLog(`Deleted file: ${file.name}`, "info", "ℹ");
     } catch (error) {
       console.error("Delete error:", error);
+      addLog(`Error deleting file: ${error.message}`, "error", "✗");
       alert("Failed to delete file. Please try again.");
     } finally {
       setIsDeletingFile(null);
     }
   };
 
-  // Rename file with loading state
+  // Rename file
   const handleRenameFile = async (oldPath) => {
-    if (!user) return;
+    if (!user || !projectId) return;
     
     if (protectedPaths.has(oldPath)) {
       alert("This file is protected and cannot be renamed.");
@@ -407,7 +596,6 @@ export default function App() {
     let newName = prompt("Rename file to:", file.name);
     if (!newName || newName === file.name) return;
 
-    // Validate new name
     const validationError = validateFileName(newName);
     if (validationError) {
       alert(validationError);
@@ -416,7 +604,6 @@ export default function App() {
 
     newName = normalizeFileName(newName);
 
-    // Check if new name already exists
     if (files.find((f) => f.name === newName && f.path !== oldPath)) {
       alert("A file with this name already exists!");
       return;
@@ -425,7 +612,6 @@ export default function App() {
     setIsRenamingFile(oldPath);
 
     try {
-      // Keep same parent folder
       const parent = oldPath.lastIndexOf("/") >= 0 
         ? oldPath.slice(0, oldPath.lastIndexOf("/")) 
         : "";
@@ -453,9 +639,12 @@ export default function App() {
         if (data[0].updated_at) {
           setLastSavedMap((m) => ({ ...m, [key]: data[0].updated_at }));
         }
+
+        addLog(`Renamed file: ${file.name} → ${newName}`, "info", "ℹ");
       }
     } catch (error) {
       console.error("Rename error:", error);
+      addLog(`Error renaming file: ${error.message}`, "error", "✗");
       alert("Failed to rename file. Please try again.");
     } finally {
       setIsRenamingFile(null);
@@ -464,19 +653,17 @@ export default function App() {
 
   // Handle file upload
   const handleFileUpload = async (event) => {
-    if (!user) return;
+    if (!user || !projectId) return;
 
     const uploadedFile = event.target.files[0];
     if (!uploadedFile) return;
 
-    // Validate file name
     const validationError = validateFileName(uploadedFile.name);
     if (validationError) {
       alert(validationError);
       return;
     }
 
-    // Check if file already exists
     if (files.find((f) => f.name === uploadedFile.name)) {
       if (!window.confirm(`File "${uploadedFile.name}" already exists. Replace it?`)) {
         return;
@@ -487,7 +674,6 @@ export default function App() {
     reader.onload = async (e) => {
       const content = e.target.result;
 
-      // Validate file size
       if (!isFileSizeValid(content)) {
         alert(
           `File is too large (${getReadableFileSize(content)}). Maximum size is 2MB.`
@@ -500,11 +686,9 @@ export default function App() {
         const path = (folder === "/" ? "" : folder) + "/" + uploadedFile.name;
         const lang = getLanguageFromFileName(uploadedFile.name);
 
-        // Check if replacing existing file
         const existingFile = files.find((f) => f.name === uploadedFile.name);
 
         if (existingFile) {
-          // Update existing file
           const { error } = await supabase
             .from("files")
             .update({ content, language: lang })
@@ -519,11 +703,11 @@ export default function App() {
           );
           setActivePath(existingFile.path);
         } else {
-          // Create new file
           const { data, error } = await supabase
             .from("files")
             .insert([{
               user_id: user.id,
+              project_id: projectId,
               name: uploadedFile.name,
               path,
               language: lang,
@@ -539,9 +723,10 @@ export default function App() {
           }
         }
 
-        alert(`✓ File "${uploadedFile.name}" uploaded successfully!`);
+        addLog(`Uploaded file: ${uploadedFile.name}`, "success", "✓");
       } catch (error) {
         console.error("Upload error:", error);
+        addLog(`Error uploading file: ${error.message}`, "error", "✗");
         alert("Failed to upload file. Please try again.");
       }
     };
@@ -551,10 +736,7 @@ export default function App() {
     };
 
     reader.readAsText(uploadedFile);
-    
-    // Reset input
     event.target.value = "";
-    setShowUploadDialog(false);
   };
 
   // Download current file
@@ -562,12 +744,12 @@ export default function App() {
     if (activeFile) {
       const success = downloadFile(activeFile);
       if (success) {
-        alert(`✓ "${activeFile.name}" downloaded successfully!`);
+        addLog(`Downloaded file: ${activeFile.name}`, "info", "ℹ");
       } else {
-        alert("Failed to download file. Please try again.");
+        addLog(`Failed to download file: ${activeFile.name}`, "error", "✗");
       }
     }
-  }, [activeFile]);
+  }, [activeFile, addLog]);
 
   // Download all files
   const handleDownloadAll = useCallback(() => {
@@ -578,12 +760,13 @@ export default function App() {
 
     if (window.confirm(`Download all ${files.length} files? They will be downloaded one by one.`)) {
       downloadAllFiles(files);
+      addLog(`Downloaded ${files.length} files`, "info", "ℹ");
     }
-  }, [files]);
+  }, [files, addLog]);
 
   // Debounced save logic
   const onChange = (val) => {
-    if (!user || !activePath) return;
+    if (!user || !activePath || !projectId) return;
 
     const idx = files.findIndex((f) => f.path === activePath);
     if (idx === -1) return;
@@ -595,7 +778,6 @@ export default function App() {
       prev.map((f) => (f.path === activePath ? { ...f, content: val } : f))
     );
 
-    // Check file size
     if (!isFileSizeValid(val)) {
       if (!file._sizeWarnShown) {
         alert(
@@ -747,7 +929,7 @@ export default function App() {
           
           <div className="topbar-right">
             <div className="keyboard-hint">
-              💡 Ctrl+N: New | Ctrl+S: Save | Ctrl+D: Download
+              💡 Ctrl+B: Build | Ctrl+T: Test | Ctrl+N: New
             </div>
             
             <div className="avatar-area" ref={avatarRef}>
@@ -775,7 +957,20 @@ export default function App() {
           </div>
         </div>
 
-        <div className="main-content">
+        <BuildPanel
+          projectId={projectId}
+          onBuild={handleBuild}
+          onTest={handleTest}
+          onDeploy={handleDeploy}
+          onOpenTerminal={() => setTerminalOpen(true)}
+          isBuilding={isBuilding}
+          isTesting={isTesting}
+          isDeploying={isDeploying}
+          lastBuildStatus={lastBuildStatus}
+          hasTerminalLogs={terminalLogs.length > 0}
+        />
+
+        <div className="main-content" style={{ marginBottom: terminalOpen ? '300px' : '0' }}>
           <FileSidebar
             files={files}
             activePath={activePath}
@@ -803,6 +998,13 @@ export default function App() {
             }
           />
         </div>
+
+        <Terminal
+          logs={terminalLogs}
+          isOpen={terminalOpen}
+          onClose={() => setTerminalOpen(false)}
+          onClear={() => setTerminalLogs([])}
+        />
       </div>
     </ErrorBoundary>
   );

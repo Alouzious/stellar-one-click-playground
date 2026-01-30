@@ -1,0 +1,166 @@
+.build-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  background: #2d2d30;
+  border-bottom: 1px solid #3e3e3e;
+}
+
+.build-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.build-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #3e3e42;
+  border: 1px solid #505050;
+  border-radius: 4px;
+  color: #cccccc;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.build-btn:hover:not(:disabled) {
+  background: #505050;
+  border-color: #606060;
+  transform: translateY(-1px);
+}
+
+.build-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.build-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.build-btn.build:hover:not(:disabled) {
+  background: #0e639c;
+  border-color: #1177bb;
+}
+
+.build-btn.test:hover:not(:disabled) {
+  background: #0e7c4d;
+  border-color: #0f9960;
+}
+
+.build-btn.deploy:hover:not(:disabled) {
+  background: #a854f7;
+  border-color: #b565f8;
+}
+
+.build-btn.terminal {
+  position: relative;
+}
+
+.terminal-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  background: #4fc3f7;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.build-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.build-status.success {
+  background: rgba(129, 199, 132, 0.1);
+  color: #81c784;
+  border: 1px solid rgba(129, 199, 132, 0.3);
+}
+
+.build-status.error {
+  background: rgba(229, 115, 115, 0.1);
+  color: #e57373;
+  border: 1px solid rgba(229, 115, 115, 0.3);
+}
+
+.status-icon {
+  font-size: 14px;
+}
+
+.status-text {
+  flex: 1;
+}
+
+.download-wasm-btn {
+  padding: 4px 12px;
+  background: rgba(129, 199, 132, 0.2);
+  border: 1px solid rgba(129, 199, 132, 0.4);
+  border-radius: 4px;
+  color: #81c784;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.download-wasm-btn:hover {
+  background: rgba(129, 199, 132, 0.3);
+  border-color: rgba(129, 199, 132, 0.6);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .build-panel {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px;
+  }
+
+  .build-actions {
+    flex-wrap: wrap;
+  }
+
+  .build-btn {
+    flex: 1;
+    min-width: calc(50% - 4px);
+  }
+
+  .build-status {
+    font-size: 11px;
+  }
+}
