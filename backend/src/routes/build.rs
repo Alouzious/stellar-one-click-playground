@@ -15,7 +15,10 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 pub fn build_routes() -> Router<AppState> {
-    Router::new().route("/projects/:id/build", post(build_project))
+    Router::new()
+        .route("/projects/:id/build", post(build_project))
+        .route("/projects/:id/test", post(test_project))
+        .route("/projects/:id/deploy", post(deploy_project))
 }
 
 #[derive(Serialize)]
@@ -26,8 +29,34 @@ struct BuildResponse {
     message: Option<String>,
 }
 
+#[derive(Serialize)]
+struct TestResponse {
+    success: bool,
+    logs: String,
+    message: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DeployResponse {
+    success: bool,
+    contract_id: Option<String>,
+    logs: String,
+    message: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct BuildRequest {}
+
+#[derive(Deserialize)]
+struct TestRequest {}
+
+#[derive(Deserialize)]
+struct DeployRequest {
+    #[allow(dead_code)]
+    wasm_base64: String,
+    #[allow(dead_code)]
+    network: String,
+}
 
 async fn build_project(
     Path(project_id): Path<Uuid>,
@@ -111,7 +140,7 @@ async fn build_project(
     let timeout_secs: u64 = env::var("BUILD_TIMEOUT_SECONDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(90);
+        .unwrap_or(300);
 
     let work_dir_str = work_dir.to_string_lossy().to_string();
 
@@ -226,5 +255,177 @@ async fn build_project(
         } else {
             None
         },
+    }))
+}
+
+async fn test_project(
+    Path(project_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(_req): Json<TestRequest>,
+) -> Result<Json<TestResponse>, (StatusCode, String)> {
+    // 1. Fetch files from Supabase
+    let supabase_url = &state.supabase_url;
+    let supabase_key = &state.supabase_service_role_key;
+
+    let url = format!(
+        "{}/rest/v1/files?project_id=eq.{}",
+        supabase_url, project_id
+    );
+
+    let response = state
+        .http_client
+        .get(&url)
+        .header("apikey", supabase_key)
+        .header("Authorization", format!("Bearer {}", supabase_key))
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch files: {}", e),
+            )
+        })?;
+
+    let files: Vec<serde_json::Value> = response.json().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to parse files: {}", e),
+        )
+    })?;
+
+    if files.is_empty() {
+        return Ok(Json(TestResponse {
+            success: false,
+            logs: String::new(),
+            message: Some("No files found for this project".to_string()),
+        }));
+    }
+
+    // 2. Create temp directory
+    let temp_dir = TempDir::new().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create temp dir: {}", e),
+        )
+    })?;
+
+    let work_dir = temp_dir.path();
+
+    // 3. Write files to temp directory
+    for file in &files {
+        let path_str = file["path"].as_str().unwrap_or("");
+        let content = file["content"].as_str().unwrap_or("");
+
+        let file_path = work_dir.join(path_str.trim_start_matches('/'));
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to create directories: {}", e),
+                )
+            })?;
+        }
+
+        fs::write(&file_path, content).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to write file: {}", e),
+            )
+        })?;
+    }
+
+    // 4. Run cargo test
+    let runner_image = env::var("RUNNER_IMAGE").unwrap_or_else(|_| "soroban-runner".to_string());
+    let timeout_secs: u64 = env::var("TEST_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1200);
+
+    let work_dir_str = work_dir.to_string_lossy().to_string();
+
+    let test_script = r#"
+        set -e
+        cd /work
+        
+        # Fix ownership to runner user
+        chown -R runner:runner /work
+        
+        echo "=== Running Tests ==="
+        echo "Running as: $(whoami)"
+        echo ""
+        
+        # Switch to runner and run tests
+        su runner -c '
+            set -e
+            cd /work
+            echo "Switched to user: $(whoami)"
+            echo "Running cargo test..."
+            /home/runner/.cargo/bin/cargo test 2>&1
+        '
+    "#;
+
+    let mut cmd = Command::new("docker");
+    cmd.args([
+        "run",
+        "--rm",
+        "--user", "root",
+        "--entrypoint", "bash",
+        "-v",
+        &format!("{}:/work", work_dir_str),
+        "-w",
+        "/work",
+        &runner_image,
+        "-c",
+        test_script,
+    ]);
+
+    let output = match timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
+            return Ok(Json(TestResponse {
+                success: false,
+                logs: format!("Docker command failed: {}", e),
+                message: None,
+            }));
+        }
+        Err(_) => {
+            return Ok(Json(TestResponse {
+                success: false,
+                logs: format!("Tests timed out after {} seconds", timeout_secs),
+                message: None,
+            }));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let logs = format!("status: {:?}\n\nstdout:\n{}\n\nstderr:\n{}", output.status, stdout, stderr);
+
+    Ok(Json(TestResponse {
+        success: output.status.success(),
+        logs,
+        message: if output.status.success() {
+            Some("All tests passed! ✅".to_string())
+        } else {
+            Some("Some tests failed ❌".to_string())
+        },
+    }))
+}
+
+async fn deploy_project(
+    Path(project_id): Path<Uuid>,
+    State(_state): State<AppState>,
+    Json(req): Json<DeployRequest>,
+) -> Result<Json<DeployResponse>, (StatusCode, String)> {
+    // TODO: Implement actual deployment to Stellar
+    // For now, return a mock response
+    Ok(Json(DeployResponse {
+        success: false,
+        contract_id: None,
+        logs: "Deployment not yet implemented".to_string(),
+        message: Some(format!(
+            "Deploy endpoint called for project {} on network {}",
+            project_id, req.network
+        )),
     }))
 }

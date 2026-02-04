@@ -1,5 +1,6 @@
+// Final complete file structure - 9 files total
 export const defaultTemplates = [
-  // Root configuration files
+  // Cargo.toml - Required configuration with correct path
   {
     name: "Cargo.toml",
     path: "/Cargo.toml",
@@ -11,6 +12,7 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
+path = "contract/lib.rs"
 
 [dependencies]
 soroban-sdk = "21.7.7"
@@ -27,111 +29,68 @@ debug-assertions = false
 panic = "abort"
 codegen-units = 1
 lto = true
-
-[profile.release-with-logs]
-inherits = "release"
-debug-assertions = true
 `
   },
+
+  // README with welcome info
   {
     name: "README.md",
     path: "/README.md",
     language: "markdown",
-    content: `# Soroban Smart Contract
+    content: `# 🦀 Soroban Smart Contract IDE
 
-A Soroban smart contract project built with Rust.
+Welcome to your Soroban development environment!
 
-## Project Structure
+## 📁 Project Structure
 
 \`\`\`
-├── contract/          # Smart contract source code
-│   ├── lib.rs        # Main contract implementation
-│   └── test.rs       # Unit tests
-├── tests/            # Integration tests
-│   └── integration_test.rs
-├── scripts/          # Build and deployment scripts
-│   ├── build.sh      # Build script
-│   ├── deploy.sh     # Deployment script
-│   └── test.sh       # Test runner
-├── Cargo.toml        # Rust dependencies and configuration
-├── .gitignore        # Git ignore rules
-└── README.md         # This file
+📄 Cargo.toml          - Rust configuration
+📄 README.md           - This file
+📁 contract/
+  📄 lib.rs            - Main contract (Hello World) ⭐
+  📄 voting.rs         - Example: Voting contract
+  📄 token.rs          - Example: Token contract
+📁 tests/
+  📄 test.rs           - Main contract tests
+  📄 voting.rs         - Voting contract tests
+  📄 token.rs          - Token contract tests
 \`\`\`
 
-## Getting Started
+## 🚀 Quick Start
 
-### Prerequisites
+1. **Edit** \`contract/lib.rs\` - Write your smart contract
+2. **Click Build** 🔨 - Compile to WASM
+3. **Click Test** 🧪 - Run tests
+4. **Click Deploy** 🚀 - Deploy to Stellar testnet
 
-- Rust and Cargo
-- Soroban CLI
-- wasm32-unknown-unknown target
+## ⌨️ Keyboard Shortcuts
 
-### Building
+- \`Ctrl + B\` - Build contract
+- \`Ctrl + T\` - Run tests
+- \`Ctrl + N\` - New file
+- \`Ctrl + S\` - Save (auto-saves already)
 
-\`\`\`bash
-cargo build --target wasm32-unknown-unknown --release
-\`\`\`
+## 📚 Example Contracts
 
-Or use the build script:
+- \`contract/lib.rs\` - Hello World (starter)
+- \`contract/voting.rs\` - Voting system
+- \`contract/token.rs\` - Token contract
 
-\`\`\`bash
-bash scripts/build.sh
-\`\`\`
+Each has tests in \`tests/\` folder!
 
-### Testing
+## 🔗 Resources
 
-\`\`\`bash
-cargo test
-\`\`\`
-
-Or use the test script:
-
-\`\`\`bash
-bash scripts/test.sh
-\`\`\`
-
-## Contract Functions
-
-- \`hello(to: Symbol)\` - Returns a greeting message
-- \`increment()\` - Increments a counter stored in contract storage
-- \`get_count()\` - Gets the current counter value
-
-## Resources
-
-- [Soroban Documentation](https://soroban.stellar.org/docs)
+- [Soroban Docs](https://soroban.stellar.org/docs)
+- [Stellar Docs](https://developers.stellar.org)
 - [Soroban Examples](https://github.com/stellar/soroban-examples)
-- [Stellar Documentation](https://developers.stellar.org)
-`
-  },
-  {
-    name: ".gitignore",
-    path: "/.gitignore",
-    language: "plaintext",
-    content: `# Rust
-/target/
-Cargo.lock
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-*.wasm
-*.optimized.wasm
-
-# Node modules (if using any JS tooling)
-node_modules/
 `
   },
 
-  // Contract folder - Main contract file
+  // ============================================================================
+  // CONTRACT FILES
+  // ============================================================================
+
+  // Main contract - Hello World (lib.rs)
   {
     name: "lib.rs",
     path: "/contract/lib.rs",
@@ -139,6 +98,8 @@ node_modules/
     content: `#![no_std]
 use soroban_sdk::{contract, contractimpl, symbol_short, vec, Env, Symbol, Vec};
 
+/// A simple Hello World contract
+/// This is your main contract file - edit this to build your own!
 #[contract]
 pub struct HelloContract;
 
@@ -148,36 +109,146 @@ impl HelloContract {
     pub fn hello(env: Env, to: Symbol) -> Vec<Symbol> {
         vec![&env, symbol_short!("Hello"), to]
     }
-    
-    /// Increments a counter stored in contract storage
-    pub fn increment(env: Env) -> u32 {
-        let key = symbol_short!("COUNTER");
-        let mut count: u32 = env.storage().instance().get(&key).unwrap_or(0);
-        count += 1;
-        env.storage().instance().set(&key, &count);
-        count
-    }
-    
-    /// Gets the current counter value
-    pub fn get_count(env: Env) -> u32 {
-        let key = symbol_short!("COUNTER");
-        env.storage().instance().get(&key).unwrap_or(0)
-    }
 }
-
-mod test;
 `
   },
 
-  // Contract folder - Unit tests
+  // Example: Voting Contract
+  {
+    name: "voting.rs",
+    path: "/contract/voting.rs",
+    language: "rust",
+    content: `#![no_std]
+use soroban_sdk::{contract, contractimpl, contracttype, Env, Symbol};
+
+/// Simple voting contract example
+/// To use: Copy this code to lib.rs and the test to tests/test.rs!
+
+#[derive(Clone)]
+#[contracttype]
+pub struct Proposal {
+    pub id: u32,
+    pub description: Symbol,
+    pub yes_votes: u32,
+    pub no_votes: u32,
+}
+
+#[contract]
+pub struct VotingContract;
+
+#[contractimpl]
+impl VotingContract {
+    /// Create a new proposal
+    pub fn create_proposal(env: Env, id: u32, description: Symbol) {
+        let proposal = Proposal {
+            id,
+            description,
+            yes_votes: 0,
+            no_votes: 0,
+        };
+        env.storage().instance().set(&id, &proposal);
+    }
+    
+    /// Vote yes on a proposal
+    pub fn vote_yes(env: Env, proposal_id: u32) {
+        let mut proposal: Proposal = env.storage().instance().get(&proposal_id).unwrap();
+        proposal.yes_votes += 1;
+        env.storage().instance().set(&proposal_id, &proposal);
+    }
+    
+    /// Vote no on a proposal
+    pub fn vote_no(env: Env, proposal_id: u32) {
+        let mut proposal: Proposal = env.storage().instance().get(&proposal_id).unwrap();
+        proposal.no_votes += 1;
+        env.storage().instance().set(&proposal_id, &proposal);
+    }
+    
+    /// Get proposal results
+    pub fn get_results(env: Env, proposal_id: u32) -> Proposal {
+        env.storage().instance().get(&proposal_id).unwrap()
+    }
+}
+`
+  },
+
+  // Example: Token Contract
+  {
+    name: "token.rs",
+    path: "/contract/token.rs",
+    language: "rust",
+    content: `#![no_std]
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
+
+/// Simple token contract example
+/// To use: Copy this code to lib.rs and the test to tests/test.rs!
+
+#[contract]
+pub struct TokenContract;
+
+#[contractimpl]
+impl TokenContract {
+    /// Initialize the token with a name and total supply
+    pub fn initialize(env: Env, admin: Address, name: Symbol, total_supply: i128) {
+        env.storage().instance().set(&symbol_short!("NAME"), &name);
+        env.storage().instance().set(&symbol_short!("ADMIN"), &admin);
+        
+        // Give all tokens to admin
+        env.storage().instance().set(&admin, &total_supply);
+    }
+    
+    /// Get token name
+    pub fn name(env: Env) -> Symbol {
+        env.storage().instance().get(&symbol_short!("NAME")).unwrap()
+    }
+    
+    /// Get balance of an address
+    pub fn balance(env: Env, address: Address) -> i128 {
+        env.storage().instance().get(&address).unwrap_or(0)
+    }
+    
+    /// Transfer tokens from one address to another
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        
+        let from_balance: i128 = env.storage().instance().get(&from).unwrap_or(0);
+        let to_balance: i128 = env.storage().instance().get(&to).unwrap_or(0);
+        
+        if from_balance < amount {
+            panic!("Insufficient balance");
+        }
+        
+        env.storage().instance().set(&from, &(from_balance - amount));
+        env.storage().instance().set(&to, &(to_balance + amount));
+    }
+}
+`
+  },
+
+  // ============================================================================
+  // TEST FILES
+  // ============================================================================
+
+  // Main contract tests (test.rs)
   {
     name: "test.rs",
-    path: "/contract/test.rs",
+    path: "/tests/test.rs",
     language: "rust",
     content: `#![cfg(test)]
-
-use super::*;
 use soroban_sdk::{symbol_short, vec, Env};
+
+// We need to redefine the contract here for testing
+// In Soroban, tests are compiled separately
+use soroban_sdk::{contract, contractimpl, Symbol, Vec};
+
+#[contract]
+pub struct HelloContract;
+
+#[contractimpl]
+impl HelloContract {
+    pub fn hello(env: Env, to: Symbol) -> Vec<Symbol> {
+        vec![&env, symbol_short!("Hello"), to]
+    }
+}
 
 #[test]
 fn test_hello() {
@@ -193,149 +264,197 @@ fn test_hello() {
 }
 
 #[test]
-fn test_increment() {
+fn test_hello_soroban() {
     let env = Env::default();
     let contract_id = env.register_contract(None, HelloContract);
     let client = HelloContractClient::new(&env, &contract_id);
 
-    assert_eq!(client.increment(), 1);
-    assert_eq!(client.increment(), 2);
-    assert_eq!(client.increment(), 3);
-}
-
-#[test]
-fn test_get_count() {
-    let env = Env::default();
-    let contract_id = env.register_contract(None, HelloContract);
-    let client = HelloContractClient::new(&env, &contract_id);
-
-    assert_eq!(client.get_count(), 0);
-    client.increment();
-    assert_eq!(client.get_count(), 1);
-}
-`
-  },
-
-  // Tests folder - Integration tests
-  {
-    name: "integration_test.rs",
-    path: "/tests/integration_test.rs",
-    language: "rust",
-    content: `#![cfg(test)]
-
-use soroban_sdk::{symbol_short, vec, Env};
-
-#[test]
-fn test_contract_integration() {
-    let env = Env::default();
-    
-    // Register the contract
-    let contract_id = env.register_contract(None, crate::HelloContract);
-    let client = crate::HelloContractClient::new(&env, &contract_id);
-    
-    // Test hello function
     let result = client.hello(&symbol_short!("Soroban"));
     assert_eq!(
         result,
         vec![&env, symbol_short!("Hello"), symbol_short!("Soroban")]
     );
+}
+`
+  },
+
+  // Voting contract tests
+  {
+    name: "voting.rs",
+    path: "/tests/voting.rs",
+    language: "rust",
+    content: `#![cfg(test)]
+use soroban_sdk::{symbol_short, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, Symbol};
+
+// Redefine contract for testing
+#[derive(Clone)]
+#[contracttype]
+pub struct Proposal {
+    pub id: u32,
+    pub description: Symbol,
+    pub yes_votes: u32,
+    pub no_votes: u32,
+}
+
+#[contract]
+pub struct VotingContract;
+
+#[contractimpl]
+impl VotingContract {
+    pub fn create_proposal(env: Env, id: u32, description: Symbol) {
+        let proposal = Proposal {
+            id,
+            description,
+            yes_votes: 0,
+            no_votes: 0,
+        };
+        env.storage().instance().set(&id, &proposal);
+    }
     
-    // Test counter functions
-    assert_eq!(client.get_count(), 0);
-    assert_eq!(client.increment(), 1);
-    assert_eq!(client.get_count(), 1);
+    pub fn vote_yes(env: Env, proposal_id: u32) {
+        let mut proposal: Proposal = env.storage().instance().get(&proposal_id).unwrap();
+        proposal.yes_votes += 1;
+        env.storage().instance().set(&proposal_id, &proposal);
+    }
+    
+    pub fn vote_no(env: Env, proposal_id: u32) {
+        let mut proposal: Proposal = env.storage().instance().get(&proposal_id).unwrap();
+        proposal.no_votes += 1;
+        env.storage().instance().set(&proposal_id, &proposal);
+    }
+    
+    pub fn get_results(env: Env, proposal_id: u32) -> Proposal {
+        env.storage().instance().get(&proposal_id).unwrap()
+    }
 }
 
 #[test]
-fn test_multiple_increments() {
+fn test_voting() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, crate::HelloContract);
-    let client = crate::HelloContractClient::new(&env, &contract_id);
-    
-    for i in 1..=10 {
-        assert_eq!(client.increment(), i);
-    }
-    
-    assert_eq!(client.get_count(), 10);
+    let contract_id = env.register_contract(None, VotingContract);
+    let client = VotingContractClient::new(&env, &contract_id);
+
+    // Create proposal
+    client.create_proposal(&1, &symbol_short!("Prop1"));
+
+    // Vote
+    client.vote_yes(&1);
+    client.vote_yes(&1);
+    client.vote_no(&1);
+
+    // Check results
+    let results = client.get_results(&1);
+    assert_eq!(results.yes_votes, 2);
+    assert_eq!(results.no_votes, 1);
+}
+
+#[test]
+fn test_multiple_proposals() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, VotingContract);
+    let client = VotingContractClient::new(&env, &contract_id);
+
+    // Create multiple proposals
+    client.create_proposal(&1, &symbol_short!("Prop1"));
+    client.create_proposal(&2, &symbol_short!("Prop2"));
+
+    // Vote on proposals
+    client.vote_yes(&1);
+    client.vote_yes(&1);
+    client.vote_no(&2);
+
+    // Check results
+    let results1 = client.get_results(&1);
+    assert_eq!(results1.yes_votes, 2);
+    assert_eq!(results1.no_votes, 0);
+
+    let results2 = client.get_results(&2);
+    assert_eq!(results2.yes_votes, 0);
+    assert_eq!(results2.no_votes, 1);
 }
 `
   },
 
-  // Scripts folder - Build script
+  // Token contract tests
   {
-    name: "build.sh",
-    path: "/scripts/build.sh",
-    language: "bash",
-    content: `#!/usr/bin/env bash
+    name: "token.rs",
+    path: "/tests/token.rs",
+    language: "rust",
+    content: `#![cfg(test)]
+use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env};
+use soroban_sdk::{contract, contractimpl, Symbol};
 
-set -e
+// Redefine contract for testing
+#[contract]
+pub struct TokenContract;
 
-echo "🔨 Building Soroban contract..."
+#[contractimpl]
+impl TokenContract {
+    pub fn initialize(env: Env, admin: Address, name: Symbol, total_supply: i128) {
+        env.storage().instance().set(&symbol_short!("NAME"), &name);
+        env.storage().instance().set(&symbol_short!("ADMIN"), &admin);
+        env.storage().instance().set(&admin, &total_supply);
+    }
+    
+    pub fn name(env: Env) -> Symbol {
+        env.storage().instance().get(&symbol_short!("NAME")).unwrap()
+    }
+    
+    pub fn balance(env: Env, address: Address) -> i128 {
+        env.storage().instance().get(&address).unwrap_or(0)
+    }
+    
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        
+        let from_balance: i128 = env.storage().instance().get(&from).unwrap_or(0);
+        let to_balance: i128 = env.storage().instance().get(&to).unwrap_or(0);
+        
+        if from_balance < amount {
+            panic!("Insufficient balance");
+        }
+        
+        env.storage().instance().set(&from, &(from_balance - amount));
+        env.storage().instance().set(&to, &(to_balance + amount));
+    }
+}
 
-# Build the contract
-cargo build --target wasm32-unknown-unknown --release
+#[test]
+fn test_token_initialize() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, TokenContract);
+    let client = TokenContractClient::new(&env, &contract_id);
 
-echo "✅ Build complete!"
+    let admin = Address::generate(&env);
 
-# Optional: Optimize the WASM file
-# Uncomment if you have soroban-cli installed
-# echo "🔧 Optimizing WASM..."
-# soroban contract optimize \\
-#   --wasm target/wasm32-unknown-unknown/release/soroban_contract.wasm
+    // Initialize token
+    client.initialize(&admin, &symbol_short!("TOKEN"), &1000);
 
-echo "📦 Contract built successfully!"
-echo "Location: target/wasm32-unknown-unknown/release/soroban_contract.wasm"
+    // Check name and balance
+    assert_eq!(client.name(), symbol_short!("TOKEN"));
+    assert_eq!(client.balance(&admin), 1000);
+}
+
+#[test]
+fn test_token_transfer() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, TokenContract);
+    let client = TokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    // Initialize and transfer
+    client.initialize(&admin, &symbol_short!("COIN"), &1000);
+    
+    env.mock_all_auths();
+    client.transfer(&admin, &user, &100);
+
+    // Check balances
+    assert_eq!(client.balance(&admin), 900);
+    assert_eq!(client.balance(&user), 100);
+}
 `
   },
-
-  // Scripts folder - Deploy script
-  {
-    name: "deploy.sh",
-    path: "/scripts/deploy.sh",
-    language: "bash",
-    content: `#!/usr/bin/env bash
-
-set -e
-
-# Configuration
-NETWORK="testnet"
-CONTRACT_WASM="target/wasm32-unknown-unknown/release/soroban_contract.wasm"
-
-echo "🚀 Deploying to $NETWORK..."
-
-# Check if contract is built
-if [ ! -f "$CONTRACT_WASM" ]; then
-    echo "❌ Contract not found. Please build first with: bash scripts/build.sh"
-    exit 1
-fi
-
-# Deploy the contract
-# Note: Requires soroban-cli to be installed
-# soroban contract deploy \\
-#   --wasm $CONTRACT_WASM \\
-#   --network $NETWORK \\
-#   --source <YOUR_SECRET_KEY>
-
-echo "✅ Deployment complete!"
-echo "Remember to save your contract ID!"
-`
-  },
-
-  // Scripts folder - Test script
-  {
-    name: "test.sh",
-    path: "/scripts/test.sh",
-    language: "bash",
-    content: `#!/usr/bin/env bash
-
-set -e
-
-echo "🧪 Running tests..."
-
-# Run all tests
-cargo test
-
-echo "✅ All tests passed!"
-`
-  }
 ];

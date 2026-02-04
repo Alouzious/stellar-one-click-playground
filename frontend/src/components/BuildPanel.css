@@ -3,8 +3,9 @@
   align-items: center;
   gap: 16px;
   padding: 0 16px;
-  background: #2d2d30;
-  border-bottom: 1px solid #3e3e3e;
+  background: #1e1e1e;
+  border-bottom: 1px solid #2d2d30;
+  height: 48px;
 }
 
 .build-actions {
@@ -17,26 +18,26 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 16px;
-  background: #3e3e42;
-  border: 1px solid #505050;
-  border-radius: 4px;
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid #3e3e42;
+  border-radius: 3px;
   color: #cccccc;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s ease;
   position: relative;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .build-btn:hover:not(:disabled) {
-  background: #505050;
-  border-color: #606060;
-  transform: translateY(-1px);
+  background: #2a2d2e;
+  border-color: #505050;
 }
 
 .build-btn:active:not(:disabled) {
-  transform: translateY(0);
+  background: #1e1e1e;
 }
 
 .build-btn:disabled {
@@ -45,18 +46,21 @@
 }
 
 .build-btn.build:hover:not(:disabled) {
-  background: #0e639c;
-  border-color: #1177bb;
+  background: #1e3a5f;
+  border-color: #2b5a8e;
+  color: #ffffff;
 }
 
 .build-btn.test:hover:not(:disabled) {
-  background: #0e7c4d;
-  border-color: #0f9960;
+  background: #1e4d35;
+  border-color: #2b7050;
+  color: #ffffff;
 }
 
 .build-btn.deploy:hover:not(:disabled) {
-  background: #a854f7;
-  border-color: #b565f8;
+  background: #4a2566;
+  border-color: #6b3890;
+  color: #ffffff;
 }
 
 .build-btn.terminal {
@@ -65,21 +69,24 @@
 
 .terminal-badge {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 8px;
-  height: 8px;
-  background: #4fc3f7;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  background: #3794ff;
   border-radius: 50%;
   animation: pulse 2s infinite;
+  box-shadow: 0 0 4px #3794ff;
 }
 
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
+    transform: scale(1);
   }
   50% {
-    opacity: 0.5;
+    opacity: 0.6;
+    transform: scale(0.9);
   }
 }
 
@@ -101,46 +108,58 @@
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  border-radius: 4px;
+  border-radius: 3px;
   font-size: 12px;
   font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .build-status.success {
-  background: rgba(129, 199, 132, 0.1);
-  color: #81c784;
-  border: 1px solid rgba(129, 199, 132, 0.3);
+  background: rgba(73, 156, 84, 0.15);
+  color: #89d185;
+  border: 1px solid rgba(73, 156, 84, 0.4);
 }
 
 .build-status.error {
-  background: rgba(229, 115, 115, 0.1);
-  color: #e57373;
-  border: 1px solid rgba(229, 115, 115, 0.3);
+  background: rgba(240, 71, 71, 0.15);
+  color: #f48771;
+  border: 1px solid rgba(240, 71, 71, 0.4);
 }
 
 .status-icon {
-  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .status-text {
   flex: 1;
+  white-space: nowrap;
 }
 
 .download-wasm-btn {
-  padding: 4px 12px;
-  background: rgba(129, 199, 132, 0.2);
-  border: 1px solid rgba(129, 199, 132, 0.4);
-  border-radius: 4px;
-  color: #81c784;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(73, 156, 84, 0.2);
+  border: 1px solid rgba(73, 156, 84, 0.5);
+  border-radius: 3px;
+  color: #89d185;
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .download-wasm-btn:hover {
-  background: rgba(129, 199, 132, 0.3);
-  border-color: rgba(129, 199, 132, 0.6);
+  background: rgba(73, 156, 84, 0.3);
+  border-color: rgba(73, 156, 84, 0.7);
+}
+
+.download-wasm-btn:active {
+  background: rgba(73, 156, 84, 0.25);
 }
 
 /* Responsive */
@@ -149,6 +168,7 @@
     flex-direction: column;
     align-items: stretch;
     padding: 8px;
+    height: auto;
   }
 
   .build-actions {
@@ -158,9 +178,14 @@
   .build-btn {
     flex: 1;
     min-width: calc(50% - 4px);
+    justify-content: center;
   }
 
   .build-status {
+    font-size: 11px;
+  }
+
+  .status-text {
     font-size: 11px;
   }
 }

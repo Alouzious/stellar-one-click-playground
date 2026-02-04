@@ -1,4 +1,7 @@
-/* Sidebar Container */
+/* ============================================================================
+   FILE SIDEBAR - VS CODE STYLE
+   ============================================================================ */
+
 .sidebar {
   width: 260px;
   background: #1e1e1e;
@@ -8,16 +11,21 @@
   flex-shrink: 0;
   border-right: 1px solid #2d2d2d;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  user-select: none;
 }
 
-/* Sidebar Header */
+/* ============================================================================
+   HEADER
+   ============================================================================ */
+
 .sidebar-header {
-  padding: 8px 12px;
+  padding: 8px 16px 8px 20px;
   background: #252526;
   border-bottom: 1px solid #2d2d2d;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  height: 35px;
 }
 
 .sidebar-title {
@@ -25,144 +33,198 @@
   align-items: center;
   gap: 8px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
   color: #9d9d9d;
 }
 
-.project-icon {
-  font-size: 16px;
+.sidebar-title svg {
+  color: #cccccc;
 }
 
-/* New File Button */
-.new-file-btn {
+.sidebar-new-btn {
   background: transparent;
   border: none;
   color: #cccccc;
-  font-size: 20px;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border-radius: 5px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s ease;
+  transition: all 0.15s ease;
+  padding: 0;
 }
 
-.new-file-btn:hover {
+.sidebar-new-btn:hover:not(:disabled) {
   background: #2a2d2e;
+  color: #ffffff;
 }
 
-.new-file-btn:active {
+.sidebar-new-btn:active:not(:disabled) {
   background: #37373d;
 }
 
-/* File Tree */
-.file-tree {
+.sidebar-new-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================================
+   FILE TREE
+   ============================================================================ */
+
+.sidebar-tree {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 4px 0;
 }
 
-/* Scrollbar styling */
-.file-tree::-webkit-scrollbar {
+/* Custom scrollbar */
+.sidebar-tree::-webkit-scrollbar {
   width: 10px;
 }
 
-.file-tree::-webkit-scrollbar-track {
+.sidebar-tree::-webkit-scrollbar-track {
   background: #1e1e1e;
 }
 
-.file-tree::-webkit-scrollbar-thumb {
+.sidebar-tree::-webkit-scrollbar-thumb {
   background: #424242;
-  border-radius: 5px;
+  border-radius: 10px;
+  border: 2px solid #1e1e1e;
 }
 
-.file-tree::-webkit-scrollbar-thumb:hover {
+.sidebar-tree::-webkit-scrollbar-thumb:hover {
   background: #4e4e4e;
 }
 
-/* Root Files */
-.root-files {
-  margin-bottom: 4px;
+/* ============================================================================
+   EMPTY STATE
+   ============================================================================ */
+
+.sidebar-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 24px;
+  text-align: center;
+  color: #6e6e6e;
+  gap: 16px;
 }
 
-/* Folder Item */
+.sidebar-empty svg {
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+
+.empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #858585;
+  margin: 0;
+}
+
+.empty-subtitle {
+  font-size: 12px;
+  color: #6e6e6e;
+  margin: 0;
+}
+
+/* ============================================================================
+   FOLDER ITEM
+   ============================================================================ */
+
 .folder-item {
-  margin-bottom: 2px;
+  margin: 0;
 }
 
 .folder-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 4px;
+  padding: 4px 8px;
   cursor: pointer;
-  user-select: none;
-  transition: background 0.15s ease;
+  transition: background 0.1s ease;
   font-size: 13px;
+  height: 22px;
 }
 
 .folder-header:hover {
-  background: #2a2d2e;
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.folder-arrow {
-  font-size: 10px;
+.folder-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   color: #858585;
-  width: 12px;
-  display: inline-block;
-  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
 }
 
 .folder-icon {
-  font-size: 16px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
 }
 
 .folder-name {
   flex: 1;
   font-weight: 500;
   color: #cccccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.folder-count {
-  font-size: 11px;
+.folder-badge {
+  font-size: 10px;
   color: #858585;
-  background: #2d2d2d;
-  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 6px;
   border-radius: 10px;
-  min-width: 20px;
+  font-weight: 600;
+  min-width: 18px;
   text-align: center;
+  line-height: 1.4;
 }
 
-/* Folder Contents */
 .folder-contents {
-  /* No additional styling needed, files handle their own padding */
+  /* No extra styling - files handle their own padding */
 }
 
-/* File Item */
+/* ============================================================================
+   FILE ITEM
+   ============================================================================ */
+
 .file-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
+  padding: 4px 8px;
   cursor: pointer;
-  user-select: none;
-  transition: background 0.15s ease;
+  transition: background 0.1s ease;
   font-size: 13px;
+  height: 22px;
   border-left: 2px solid transparent;
   position: relative;
 }
 
 .file-item:hover {
-  background: #2a2d2e;
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.file-item:hover .file-actions {
+.file-item:hover .file-item-actions {
   opacity: 1;
 }
 
@@ -171,131 +233,205 @@
   border-left-color: #007acc;
 }
 
-.file-item.active .file-name {
+.file-item.active .file-item-name {
   color: #ffffff;
   font-weight: 500;
 }
 
+.file-item.deleting {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* File Left Section */
-.file-left {
+.file-item-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
-.file-icon {
-  font-size: 16px;
-  line-height: 1;
+.file-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
 }
 
-.file-name {
+.file-item-name {
   color: #cccccc;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
 
 /* File Right Section */
-.file-right {
+.file-item-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-/* File Status */
-.file-status {
+/* ============================================================================
+   FILE STATUS
+   ============================================================================ */
+
+.file-item-status {
   display: flex;
   align-items: center;
-  min-width: 20px;
   justify-content: center;
+  width: 16px;
+  height: 16px;
 }
 
-.status-dot {
-  font-size: 10px;
-  line-height: 1;
-}
-
-.status-dot.saving {
-  color: #ffcc00;
-  animation: pulse 1.5s infinite ease-in-out;
-}
-
-.status-dot.saved {
-  color: #73c991;
-}
-
-.status-dot.error {
-  color: #f48771;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.6;
-    transform: scale(1.1);
-  }
-}
-
-/* File Actions */
-.file-actions {
+.status-indicator {
   display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.2s ease;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
 }
 
-.file-item.active .file-actions {
+/* Spinner animation for saving */
+.spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 204, 0, 0.3);
+  border-top-color: #ffcc00;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================================================
+   FILE ACTIONS
+   ============================================================================ */
+
+.file-item-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.file-item.active .file-item-actions,
+.file-item:hover .file-item-actions {
   opacity: 1;
 }
 
-.action-btn {
+.file-action-btn {
   background: transparent;
   border: none;
   color: #858585;
-  font-size: 13px;
+  width: 18px;
+  height: 18px;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 0;
   border-radius: 3px;
   transition: all 0.15s ease;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.action-btn:hover {
-  background: #2d2d2d;
+.file-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
   color: #cccccc;
 }
 
-.action-btn:active {
-  background: #3e3e42;
+.file-action-btn.delete:hover:not(:disabled) {
+  background: rgba(244, 135, 113, 0.2);
+  color: #f48771;
 }
 
-.action-btn:disabled {
+.file-action-btn:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.file-action-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
 
-/* Responsive adjustments */
+/* ============================================================================
+   ROOT FILES SECTION
+   ============================================================================ */
+
+.root-files {
+  margin-bottom: 2px;
+}
+
+/* ============================================================================
+   RESPONSIVE
+   ============================================================================ */
+
 @media (max-width: 768px) {
   .sidebar {
     width: 220px;
   }
+
+  .sidebar-header {
+    padding: 8px 12px;
+  }
+
+  .file-item,
+  .folder-header {
+    font-size: 12px;
+  }
 }
 
-/* Empty state */
-.empty-state {
-  padding: 20px;
-  text-align: center;
-  color: #858585;
-  font-size: 13px;
+/* ============================================================================
+   FOCUS & ACCESSIBILITY
+   ============================================================================ */
+
+.file-action-btn:focus-visible,
+.sidebar-new-btn:focus-visible {
+  outline: 2px solid #007acc;
+  outline-offset: -2px;
 }
 
-.empty-state p {
-  margin: 8px 0;
+.file-item:focus-visible,
+.folder-header:focus-visible {
+  outline: 1px solid #007acc;
+  outline-offset: -1px;
+}
+
+/* ============================================================================
+   SMOOTH ANIMATIONS
+   ============================================================================ */
+
+.folder-header.open .folder-chevron {
+  /* Chevron already rotates via icon swap, no need for transform */
+}
+
+.file-item,
+.folder-header {
+  will-change: background-color;
+}
+
+/* ============================================================================
+   PROTECTED FILE INDICATORS
+   ============================================================================ */
+
+.file-item[data-protected="true"] .file-item-name {
+  position: relative;
+}
+
+.file-item[data-protected="true"] .file-item-name::after {
+  content: "🔒";
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.5;
 }

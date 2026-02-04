@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
+
+// Components
 import ErrorBoundary from "./components/ErrorBoundary";
 import FileSidebar from "./components/FileSidebar";
 import ContractEditor from "./components/ContractEditor";
 import BuildPanel from "./components/BuildPanel";
 import Terminal from "./components/Terminal";
+import WelcomeScreen from "./components/WelcomeScreen";
+
+// Data & Utils
 import { defaultTemplates } from "./defaultTemplates";
 import {
   buildContract,
@@ -24,54 +29,108 @@ import {
   getReadableFileSize,
   getInitials,
 } from "./utils/fileUtils";
+
+// Hooks
 import { useKeyboardShortcuts, useBeforeUnload } from "./hooks/useCustomHooks";
+
+// Styles
 import "./App.css";
 
+// Constants
+const PROTECTED_PATHS = new Set([
+  "/Cargo.toml",
+  "/contract/lib.rs",
+]);
+
 export default function App() {
+  // State
   const [user, setUser] = useState(null);
   const [loggingIn, setLoggingIn] = useState(true);
+  const [projectId, setProjectId] = useState(null);
   const [files, setFiles] = useState([]);
   const [activePath, setActivePath] = useState(null);
-  const [projectId, setProjectId] = useState(null);
-
+  
   const [savingMap, setSavingMap] = useState({});
   const [savedMap, setSavedMap] = useState({});
   const [lastSavedMap, setLastSavedMap] = useState({});
   const [errorMap, setErrorMap] = useState({});
-
+  
   const [avatarOpen, setAvatarOpen] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(true);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  
   const [isCreatingFile, setIsCreatingFile] = useState(false);
   const [isDeletingFile, setIsDeletingFile] = useState(null);
   const [isRenamingFile, setIsRenamingFile] = useState(null);
-
-  // Build/Test/Deploy states
+  
   const [isBuilding, setIsBuilding] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
   const [lastBuildStatus, setLastBuildStatus] = useState(null);
-  const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState([]);
-
+  
   const avatarRef = useRef(null);
   const saveTimeoutRef = useRef({});
   const fileInputRef = useRef(null);
-
+  
   const activeFile = files.find((f) => f.path === activePath);
-
-  // Protected core files
-  const protectedPaths = new Set([
-    "/Cargo.toml",
-    "/contract/lib.rs",
-    "/README.md"
-  ]);
-
-  // Check if there are unsaved changes
   const hasUnsavedChanges = Object.values(savingMap).some(v => v);
 
-  // Warn before leaving with unsaved changes
+  // Hooks
   useBeforeUnload(hasUnsavedChanges);
+  
+  // Check if user has visited before
+  useEffect(() => {
+    const hasVisited = localStorage.getItem('hasVisitedIDE');
+    if (hasVisited) {
+      setShowWelcome(false);
+    }
+  }, []);
+  
+  // Authentication
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null);
+      setLoggingIn(false);
+    });
 
-  // Add terminal log helper
+    const { subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    }) || {};
+
+    return () => subscription?.unsubscribe?.();
+  }, []);
+  
+  // Close avatar dropdown
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (avatarRef.current && !avatarRef.current.contains(e.target)) {
+        setAvatarOpen(false);
+      }
+    };
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, []);
+  
+  // Cleanup timers
+  useEffect(() => {
+    return () => {
+      Object.values(saveTimeoutRef.current).forEach((t) => clearTimeout(t));
+      saveTimeoutRef.current = {};
+    };
+  }, []);
+  
+  // When user changes
+  useEffect(() => {
+    if (user) {
+      ensureProjectStructureForUser();
+    } else {
+      resetAppState();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Terminal logging
   const addLog = useCallback((text, type = 'default', prefix = '>') => {
     setTerminalLogs(prev => [
       ...prev,
@@ -125,64 +184,14 @@ export default function App() {
     },
   ]);
 
-  // Auth logic
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      setLoggingIn(false);
-    });
-
-    const { subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    }) || {};
-
-    return () => subscription?.unsubscribe?.();
-  }, []);
-
-  // Close avatar dropdown on outside click
-  useEffect(() => {
-    const onDoc = (e) => {
-      if (avatarRef.current && !avatarRef.current.contains(e.target)) {
-        setAvatarOpen(false);
-      }
-    };
-    document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
-  }, []);
-
-  // Cleanup timers
-  useEffect(() => {
-    return () => {
-      Object.values(saveTimeoutRef.current).forEach((t) => clearTimeout(t));
-      saveTimeoutRef.current = {};
-    };
-  }, []);
-
-  // When user changes
-  useEffect(() => {
-    if (user) ensureProjectStructureForUser();
-    else {
-      setFiles([]);
-      setActivePath(null);
-      setProjectId(null);
-      setSavingMap({});
-      setSavedMap({});
-      setLastSavedMap({});
-      setErrorMap({});
-      setTerminalLogs([]);
-      setLastBuildStatus(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  // Load or create project for user
+  // Project setup - FIXED VERSION
   async function ensureProjectStructureForUser() {
     if (!user) return;
     
     try {
       addLog("Initializing project...", "info", "ℹ");
 
-      // Check if user has a project
+      // Get or create project
       const { data: existingProjects, error: fetchError } = await supabase
         .from("projects")
         .select("*")
@@ -197,7 +206,6 @@ export default function App() {
         project = existingProjects[0];
         addLog(`Loaded project: ${project.name}`, "success", "✓");
       } else {
-        // Create new project
         const { data: newProject, error: createError } = await supabase
           .from("projects")
           .insert([{
@@ -215,7 +223,7 @@ export default function App() {
 
       setProjectId(project.id);
 
-      // Load files for this project
+      // Load existing files
       const { data: existingFiles, error: filesError } = await supabase
         .from("files")
         .select("*")
@@ -223,19 +231,35 @@ export default function App() {
 
       if (filesError) throw filesError;
 
-      const existingPaths = new Set((existingFiles || []).map((r) => r.path));
+      // If files exist, just load them and exit
+      if (existingFiles && existingFiles.length > 0) {
+        setFiles(existingFiles);
+        
+        const lastSaved = {};
+        existingFiles.forEach((f) => {
+          const key = f.id || f.path;
+          if (f.updated_at) lastSaved[key] = f.updated_at;
+        });
+        
+        setLastSavedMap(lastSaved);
+        setSavedMap({});
+        setSavingMap({});
+        setErrorMap({});
+        
+        setActivePath((prev) => prev || existingFiles[0].path);
+        addLog("Project ready!", "success", "✓");
+        return; // EXIT HERE - Don't create template files!
+      }
 
-      // Insert template files if they don't exist
-      const toInsert = defaultTemplates
-        .filter((t) => !existingPaths.has(t.path))
-        .map((t) => ({
-          user_id: user.id,
-          project_id: project.id,
-          name: t.name,
-          path: t.path,
-          language: t.language,
-          content: t.content,
-        }));
+      // Only create template files if NO files exist
+      const toInsert = defaultTemplates.map((t) => ({
+        user_id: user.id,
+        project_id: project.id,
+        name: t.name,
+        path: t.path,
+        language: t.language,
+        content: t.content,
+      }));
 
       if (toInsert.length > 0) {
         const { error: insertErr } = await supabase
@@ -246,52 +270,38 @@ export default function App() {
         addLog(`Created ${toInsert.length} template files`, "success", "✓");
       }
 
-      await loadFiles(project.id);
+      // Load files
+      const { data: newFiles } = await supabase
+        .from("files")
+        .select("*")
+        .eq("project_id", project.id)
+        .order("path");
+
+      setFiles(newFiles || []);
+      if (newFiles && newFiles.length) {
+        setActivePath(newFiles[0].path);
+      }
+      
       addLog("Project ready!", "success", "✓");
     } catch (error) {
       console.error("Error setting up project:", error);
       addLog(`Error: ${error.message}`, "error", "✗");
-      alert("Failed to set up project structure. Please try again.");
     }
   }
-
-  // Load files for project
-  async function loadFiles(projId) {
-    if (!user || !projId) return;
-    
-    try {
-      const { data, error } = await supabase
-        .from("files")
-        .select("*")
-        .eq("project_id", projId)
-        .order("path");
-        
-      if (error) throw error;
-      
-      setFiles(data || []);
-      
-      const lastSaved = {};
-      (data || []).forEach((f) => {
-        const key = f.id || f.path;
-        if (f.updated_at) lastSaved[key] = f.updated_at;
-      });
-      
-      setLastSavedMap(lastSaved);
-      setSavedMap({});
-      setSavingMap({});
-      setErrorMap({});
-      
-      if (data && data.length) {
-        setActivePath((prev) => prev || data[0].path);
-      }
-    } catch (error) {
-      console.error("Error loading files:", error);
-      addLog(`Error loading files: ${error.message}`, "error", "✗");
-      alert("Failed to load files. Please refresh the page.");
-    }
+  
+  function resetAppState() {
+    setFiles([]);
+    setActivePath(null);
+    setProjectId(null);
+    setSavingMap({});
+    setSavedMap({});
+    setLastSavedMap({});
+    setErrorMap({});
+    setTerminalLogs([]);
+    setLastBuildStatus(null);
   }
 
-  // Build handler
+  // Build/Test/Deploy handlers
   const handleBuild = async () => {
     if (!projectId) {
       alert("No project selected");
@@ -305,7 +315,6 @@ export default function App() {
     try {
       const result = await buildContract(projectId);
       
-      // Parse and display logs
       const parsedLogs = parseBuildLogs(result.logs);
       parsedLogs.forEach(log => {
         addLog(log.text, log.type, log.type === 'error' ? '✗' : log.type === 'success' ? '✓' : '>');
@@ -321,22 +330,17 @@ export default function App() {
         });
       } else {
         addLog("Build failed. Check logs above for details.", "error", "✗");
-        setLastBuildStatus({
-          success: false,
-        });
+        setLastBuildStatus({ success: false });
       }
     } catch (error) {
       console.error("Build error:", error);
       addLog(`Build error: ${error.message}`, "error", "✗");
-      setLastBuildStatus({
-        success: false,
-      });
+      setLastBuildStatus({ success: false });
     } finally {
       setIsBuilding(false);
     }
   };
-
-  // Test handler
+  
   const handleTest = async () => {
     if (!projectId) {
       alert("No project selected");
@@ -367,8 +371,7 @@ export default function App() {
       setIsTesting(false);
     }
   };
-
-  // Deploy handler
+  
   const handleDeploy = async () => {
     if (!projectId) {
       alert("No project selected");
@@ -401,44 +404,7 @@ export default function App() {
     }
   };
 
-  // Auth actions
-  const signInWithGoogle = async () => {
-    try {
-      await supabase.auth.signInWithOAuth({ provider: "google" });
-    } catch (error) {
-      console.error("Sign in error:", error);
-      alert("Failed to sign in. Please try again.");
-    }
-  };
-
-  const signOut = async () => {
-    try {
-      if (hasUnsavedChanges) {
-        if (!window.confirm("You have unsaved changes. Are you sure you want to sign out?")) {
-          return;
-        }
-      }
-      
-      await supabase.auth.signOut();
-      setFiles([]);
-      setActivePath(null);
-      setProjectId(null);
-      setSavingMap({});
-      setSavedMap({});
-      setLastSavedMap({});
-      setErrorMap({});
-      setTerminalLogs([]);
-      setLastBuildStatus(null);
-    } catch (error) {
-      console.error("Sign out error:", error);
-      alert("Failed to sign out. Please try again.");
-    }
-  };
-
-  // Helpers
-  const fileKey = (f) => f?.id || f?.path;
-
-  // Create new file
+  // File operations (keeping your original code)
   const handleNewFile = async () => {
     if (!user || !projectId) {
       alert("Please sign in first.");
@@ -451,7 +417,6 @@ export default function App() {
     if (!name) return;
 
     name = name.trim();
-
     const validationError = validateFileName(name);
     if (validationError) {
       alert(validationError);
@@ -507,12 +472,11 @@ export default function App() {
       setIsCreatingFile(false);
     }
   };
-
-  // Delete file
+  
   const handleDeleteFile = async (path) => {
     if (!user || !projectId) return;
     
-    if (protectedPaths.has(path)) {
+    if (PROTECTED_PATHS.has(path)) {
       alert("This file is protected and cannot be deleted.");
       return;
     }
@@ -540,26 +504,10 @@ export default function App() {
         delete saveTimeoutRef.current[key];
       }
 
-      setSavingMap((s) => {
-        const n = { ...s };
-        delete n[key];
-        return n;
-      });
-      setSavedMap((s) => {
-        const n = { ...s };
-        delete n[key];
-        return n;
-      });
-      setLastSavedMap((s) => {
-        const n = { ...s };
-        delete n[key];
-        return n;
-      });
-      setErrorMap((s) => {
-        const n = { ...s };
-        delete n[key];
-        return n;
-      });
+      setSavingMap((s) => { const n = { ...s }; delete n[key]; return n; });
+      setSavedMap((s) => { const n = { ...s }; delete n[key]; return n; });
+      setLastSavedMap((s) => { const n = { ...s }; delete n[key]; return n; });
+      setErrorMap((s) => { const n = { ...s }; delete n[key]; return n; });
 
       const newFiles = files.filter((f) => f.path !== path);
       setFiles(newFiles);
@@ -580,12 +528,11 @@ export default function App() {
       setIsDeletingFile(null);
     }
   };
-
-  // Rename file
+  
   const handleRenameFile = async (oldPath) => {
     if (!user || !projectId) return;
     
-    if (protectedPaths.has(oldPath)) {
+    if (PROTECTED_PATHS.has(oldPath)) {
       alert("This file is protected and cannot be renamed.");
       return;
     }
@@ -650,8 +597,7 @@ export default function App() {
       setIsRenamingFile(null);
     }
   };
-
-  // Handle file upload
+  
   const handleFileUpload = async (event) => {
     if (!user || !projectId) return;
 
@@ -675,9 +621,7 @@ export default function App() {
       const content = e.target.result;
 
       if (!isFileSizeValid(content)) {
-        alert(
-          `File is too large (${getReadableFileSize(content)}). Maximum size is 2MB.`
-        );
+        alert(`File is too large (${getReadableFileSize(content)}). Maximum size is 2MB.`);
         return;
       }
 
@@ -738,8 +682,7 @@ export default function App() {
     reader.readAsText(uploadedFile);
     event.target.value = "";
   };
-
-  // Download current file
+  
   const handleDownloadFile = useCallback(() => {
     if (activeFile) {
       const success = downloadFile(activeFile);
@@ -750,8 +693,7 @@ export default function App() {
       }
     }
   }, [activeFile, addLog]);
-
-  // Download all files
+  
   const handleDownloadAll = useCallback(() => {
     if (files.length === 0) {
       alert("No files to download.");
@@ -764,7 +706,7 @@ export default function App() {
     }
   }, [files, addLog]);
 
-  // Debounced save logic
+  // File content management
   const onChange = (val) => {
     if (!user || !activePath || !projectId) return;
 
@@ -780,9 +722,7 @@ export default function App() {
 
     if (!isFileSizeValid(val)) {
       if (!file._sizeWarnShown) {
-        alert(
-          `File exceeds 2MB limit. Current size: ${getReadableFileSize(val)}. Please reduce content to save.`
-        );
+        alert(`File exceeds 2MB limit. Current size: ${getReadableFileSize(val)}. Please reduce content to save.`);
         setFiles((prev) =>
           prev.map((f) =>
             f.path === activePath ? { ...f, _sizeWarnShown: true } : f
@@ -841,22 +781,60 @@ export default function App() {
     }, 700);
   };
 
-  // Get status for file
+  // Auth handlers
+  const signInWithGoogle = async () => {
+    try {
+      await supabase.auth.signInWithOAuth({ provider: "google" });
+    } catch (error) {
+      console.error("Sign in error:", error);
+      alert("Failed to sign in. Please try again.");
+    }
+  };
+  
+  const signOut = async () => {
+    try {
+      if (hasUnsavedChanges) {
+        if (!window.confirm("You have unsaved changes. Are you sure you want to sign out?")) {
+          return;
+        }
+      }
+      
+      await supabase.auth.signOut();
+      resetAppState();
+    } catch (error) {
+      console.error("Sign out error:", error);
+      alert("Failed to sign out. Please try again.");
+    }
+  };
+
+  // Welcome screen handlers
+  const handleGetStarted = () => {
+    localStorage.setItem('hasVisitedIDE', 'true');
+    setShowWelcome(false);
+  };
+  
+  const handleViewExamples = () => {
+    localStorage.setItem('hasVisitedIDE', 'true');
+    setShowWelcome(false);
+    setActivePath('/contract/voting.rs');
+  };
+
+  // Helpers
+  const fileKey = (f) => f?.id || f?.path;
+  
   function getStatusForFile(f) {
     const key = fileKey(f);
     if (savingMap[key]) return { status: "saving", text: "Saving..." };
     if (errorMap[key]) return { status: "error", text: "Save error" };
     if (savedMap[key] || lastSavedMap[key]) {
       const last = lastSavedMap[key];
-      const text = last
-        ? `Saved • ${new Date(last).toLocaleString()}`
-        : "Saved";
+      const text = last ? `Saved • ${new Date(last).toLocaleString()}` : "Saved";
       return { status: "saved", text };
     }
     return { status: "idle", text: "" };
   }
 
-  // Loading state
+  // Render
   if (loggingIn) {
     return (
       <div className="loading-container">
@@ -864,8 +842,7 @@ export default function App() {
       </div>
     );
   }
-
-  // Not authenticated
+  
   if (!user) {
     return (
       <div className="login-container">
@@ -881,7 +858,16 @@ export default function App() {
       </div>
     );
   }
-
+  
+  if (showWelcome && user) {
+    return (
+      <WelcomeScreen 
+        onGetStarted={handleGetStarted}
+        onViewExamples={handleViewExamples}
+      />
+    );
+  }
+  
   const initials = getInitials(
     user.user_metadata?.full_name ||
     user.user_metadata?.name ||
@@ -904,7 +890,7 @@ export default function App() {
                 className="topbar-btn"
                 onClick={handleDownloadFile}
                 disabled={!activeFile}
-                title="Download current file (Ctrl+D)"
+                title="Download current file"
               >
                 ⬇️ Download
               </button>
@@ -912,7 +898,7 @@ export default function App() {
               <button
                 className="topbar-btn"
                 onClick={() => fileInputRef.current?.click()}
-                title="Upload file (Ctrl+O)"
+                title="Upload file"
               >
                 ⬆️ Upload
               </button>
@@ -982,7 +968,7 @@ export default function App() {
             savedMap={savedMap}
             lastSavedMap={lastSavedMap}
             errorMap={errorMap}
-            protectedPaths={protectedPaths}
+            protectedPaths={PROTECTED_PATHS}
             isCreatingFile={isCreatingFile}
             isDeletingFile={isDeletingFile}
             isRenamingFile={isRenamingFile}

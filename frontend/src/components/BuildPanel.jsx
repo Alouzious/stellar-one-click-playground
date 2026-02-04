@@ -1,10 +1,20 @@
 import React, { useState } from "react";
+import { 
+  Hammer, 
+  FlaskConical, 
+  Rocket, 
+  Terminal as TerminalIcon,
+  CheckCircle2,
+  XCircle,
+  Download,
+  Loader2
+} from "lucide-react";
 import "./BuildPanel.css";
 
-export default function BuildPanel({ 
-  projectId, 
-  onBuild, 
-  onTest, 
+export default function BuildPanel({
+  projectId,
+  onBuild,
+  onTest,
   onDeploy,
   onOpenTerminal,
   isBuilding = false,
@@ -21,18 +31,18 @@ export default function BuildPanel({
         <button
           className="build-btn build"
           onClick={onBuild}
-          disabled={isBuilding || isTesting || isDeploying}
-          title="Build contract (Ctrl+B)"
+          disabled={isBuilding}
+          title="Build project"
         >
           {isBuilding ? (
             <>
-              <span className="spinner">⏳</span>
-              <span>Building...</span>
+              <Loader2 size={16} className="spinner" />
+              Building...
             </>
           ) : (
             <>
-              <span>🔨</span>
-              <span>Build</span>
+              <Hammer size={16} />
+              Build
             </>
           )}
         </button>
@@ -40,18 +50,18 @@ export default function BuildPanel({
         <button
           className="build-btn test"
           onClick={onTest}
-          disabled={isBuilding || isTesting || isDeploying}
-          title="Run tests (Ctrl+T)"
+          disabled={isTesting}
+          title="Run tests"
         >
           {isTesting ? (
             <>
-              <span className="spinner">⏳</span>
-              <span>Testing...</span>
+              <Loader2 size={16} className="spinner" />
+              Testing...
             </>
           ) : (
             <>
-              <span>🧪</span>
-              <span>Test</span>
+              <FlaskConical size={16} />
+              Test
             </>
           )}
         </button>
@@ -59,22 +69,18 @@ export default function BuildPanel({
         <button
           className="build-btn deploy"
           onClick={onDeploy}
-          disabled={isBuilding || isTesting || isDeploying || !lastBuildStatus?.success}
-          title={
-            !lastBuildStatus?.success 
-              ? "Build successfully first to deploy" 
-              : "Deploy to Stellar testnet"
-          }
+          disabled={isDeploying}
+          title="Deploy project"
         >
           {isDeploying ? (
             <>
-              <span className="spinner">⏳</span>
-              <span>Deploying...</span>
+              <Loader2 size={16} className="spinner" />
+              Deploying...
             </>
           ) : (
             <>
-              <span>🚀</span>
-              <span>Deploy</span>
+              <Rocket size={16} />
+              Deploy
             </>
           )}
         </button>
@@ -84,20 +90,24 @@ export default function BuildPanel({
           onClick={onOpenTerminal}
           title="Open terminal"
         >
-          <span>🖥️</span>
-          <span>Terminal</span>
-          {hasTerminalLogs && <span className="terminal-badge">●</span>}
+          <TerminalIcon size={16} />
+          Terminal
+          {hasTerminalLogs && <span className="terminal-badge" />}
         </button>
       </div>
 
       {lastBuildStatus && (
         <div className={`build-status ${lastBuildStatus.success ? 'success' : 'error'}`}>
           <span className="status-icon">
-            {lastBuildStatus.success ? '✓' : '✗'}
+            {lastBuildStatus.success ? (
+              <CheckCircle2 size={16} />
+            ) : (
+              <XCircle size={16} />
+            )}
           </span>
           <span className="status-text">
-            {lastBuildStatus.success 
-              ? `Build successful • ${lastBuildStatus.size || 'N/A'}` 
+            {lastBuildStatus.success
+              ? `Build successful • ${lastBuildStatus.size || 'N/A'}`
               : 'Build failed'}
           </span>
           {lastBuildStatus.success && lastBuildStatus.wasmBase64 && (
@@ -106,7 +116,8 @@ export default function BuildPanel({
               onClick={() => downloadWasm(lastBuildStatus.wasmBase64, 'contract.wasm')}
               title="Download WASM file"
             >
-              ⬇️ Download WASM
+              <Download size={14} />
+              Download WASM
             </button>
           )}
         </div>

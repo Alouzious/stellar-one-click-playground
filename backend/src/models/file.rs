@@ -1,5 +1,7 @@
+#![allow(dead_code)]
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
+
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FileModel {
