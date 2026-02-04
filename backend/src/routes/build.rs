@@ -52,9 +52,7 @@ struct TestRequest {}
 
 #[derive(Deserialize)]
 struct DeployRequest {
-    #[allow(dead_code)]
     wasm_base64: String,
-    #[allow(dead_code)]
     network: String,
 }
 
@@ -417,15 +415,162 @@ async fn deploy_project(
     State(_state): State<AppState>,
     Json(req): Json<DeployRequest>,
 ) -> Result<Json<DeployResponse>, (StatusCode, String)> {
-    // TODO: Implement actual deployment to Stellar
-    // For now, return a mock response
+    // 1. Decode the WASM from base64
+    let wasm_bytes = general_purpose::STANDARD
+        .decode(&req.wasm_base64)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid base64 WASM: {}", e)))?;
+
+    // 2. Create temp directory for deployment
+    let temp_dir = TempDir::new().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create temp dir: {}", e),
+        )
+    })?;
+
+    let work_dir = temp_dir.path();
+    let wasm_path = work_dir.join("contract.wasm");
+
+    // 3. Write WASM file to temp directory
+    fs::write(&wasm_path, wasm_bytes).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to write WASM file: {}", e),
+        )
+    })?;
+
+    // 4. Run deployment in Docker container
+    let runner_image = env::var("RUNNER_IMAGE").unwrap_or_else(|_| "soroban-runner".to_string());
+    let timeout_secs: u64 = env::var("DEPLOY_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(600); // 10 minutes default for deployment
+
+    let work_dir_str = work_dir.to_string_lossy().to_string();
+
+    // Deployment script - uses the runner's deploy.sh but with custom WASM
+    let deploy_script = format!(r#"
+        set -e
+        
+        echo "=== Deploying to Stellar {} ==="
+        echo "User: $(whoami)"
+        echo "Workdir: $(pwd)"
+        echo ""
+        
+        # Fix ownership
+        chown -R runner:runner /work
+        
+        # Switch to runner user for deployment
+        su runner -c '
+            set -e
+            cd /work
+            
+            echo "WASM file info:"
+            ls -lh contract.wasm
+            echo ""
+            
+            echo "Generating deployment identity..."
+            stellar keys generate deployer --network {} --fund 2>&1 | grep -v "^error" || true
+            sleep 5
+            
+            DEPLOYER_ADDRESS=$(stellar keys address deployer)
+            echo "Deployer address: $DEPLOYER_ADDRESS"
+            echo ""
+            
+            echo "Deploying contract to {}..."
+            CONTRACT_ID=$(stellar contract deploy \
+                --wasm contract.wasm \
+                --source deployer \
+                --network {} 2>&1 | tee /tmp/deploy.log | tail -n 1)
+            
+            # Check if deployment succeeded
+            if echo "$CONTRACT_ID" | grep -qE "^C[A-Z0-9]{{55}}$"; then
+                echo "✅ Contract deployed!"
+                echo "Contract ID: $CONTRACT_ID"
+                echo ""
+                echo "=== Deployment Summary ==="
+                echo "Network: Stellar {}"
+                echo "Contract ID: $CONTRACT_ID"
+                echo "Deployer: $DEPLOYER_ADDRESS"
+            else
+                echo "❌ Deployment failed!"
+                echo "Output: $CONTRACT_ID"
+                cat /tmp/deploy.log || true
+                exit 1
+            fi
+        '
+    "#, req.network, req.network, req.network, req.network, req.network);
+
+    let mut cmd = Command::new("docker");
+    cmd.args([
+        "run",
+        "--rm",
+        "--user", "root",
+        "--entrypoint", "bash",
+        "-v",
+        &format!("{}:/work", work_dir_str),
+        "-w",
+        "/work",
+        &runner_image,
+        "-c",
+        &deploy_script,
+    ]);
+
+    let output = match timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
+            return Ok(Json(DeployResponse {
+                success: false,
+                contract_id: None,
+                logs: format!("Docker command failed: {}", e),
+                message: Some("Failed to start deployment container".to_string()),
+            }));
+        }
+        Err(_) => {
+            return Ok(Json(DeployResponse {
+                success: false,
+                contract_id: None,
+                logs: format!("Deployment timed out after {} seconds", timeout_secs),
+                message: Some("Deployment took too long".to_string()),
+            }));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined_logs = format!("status: {:?}\n\nstdout:\n{}\n\nstderr:\n{}", output.status, stdout, stderr);
+
+    // 5. Parse contract ID from output
+    let contract_id = stdout
+        .lines()
+        .find(|line| line.contains("Contract ID:"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|id| id.trim().to_string())
+        .or_else(|| {
+            // Try to find a contract ID in the output (starts with C and is 56 chars)
+            stdout
+                .lines()
+                .find(|line| line.contains("C") && line.len() >= 56)
+                .and_then(|line| {
+                    line.split_whitespace()
+                        .find(|word| word.starts_with('C') && word.len() == 56)
+                        .map(|s| s.to_string())
+                })
+        });
+
+    let success = output.status.success() && contract_id.is_some();
+
     Ok(Json(DeployResponse {
-        success: false,
-        contract_id: None,
-        logs: "Deployment not yet implemented".to_string(),
-        message: Some(format!(
-            "Deploy endpoint called for project {} on network {}",
-            project_id, req.network
-        )),
+        success,
+        contract_id: contract_id.clone(),
+        logs: combined_logs,
+        message: if success {
+            Some(format!(
+                "Contract deployed successfully to {} network!",
+                req.network
+            ))
+        } else {
+            Some("Deployment failed. Check logs for details.".to_string())
+        },
     }))
 }
