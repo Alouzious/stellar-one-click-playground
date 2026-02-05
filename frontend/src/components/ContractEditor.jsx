@@ -9,7 +9,10 @@ export default function ContractEditor({ file, onChange, status = { status: "idl
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
-    // You can add language-specific diagnostics or snippets here if desired
+    
+    // Make editor globally accessible for error markers
+    window.monacoEditor = editor;
+    window.monaco = monaco;
   };
 
   useEffect(() => {
@@ -53,9 +56,9 @@ export default function ContractEditor({ file, onChange, status = { status: "idl
 
       <MonacoEditor
         height="100%"
-        defaultLanguage={file.language}
         language={file.language}
         value={file.content}
+        path={file.path}  // ← KEY FIX: This creates separate undo stacks per file!
         onChange={(value) => onChange(value)}
         theme="vs-dark"
         onMount={handleEditorDidMount}
@@ -73,6 +76,10 @@ export default function ContractEditor({ file, onChange, status = { status: "idl
           suggestOnTriggerCharacters: true,
           acceptSuggestionOnEnter: "on",
           snippetSuggestions: "top",
+          autoClosingBrackets: "always",
+          autoClosingQuotes: "always",
+          formatOnPaste: true,
+          formatOnType: false,
         }}
       />
     </div>

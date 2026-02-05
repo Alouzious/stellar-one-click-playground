@@ -8,6 +8,9 @@ import ContractEditor from "./components/ContractEditor";
 import BuildPanel from "./components/BuildPanel";
 import Terminal from "./components/Terminal";
 import WelcomeScreen from "./components/WelcomeScreen";
+import ErrorPanel from "./components/ErrorPanel";
+import StatusBar from "./components/StatusBar";
+import OperationProgress from "./components/OperationProgress";
 
 // Data & Utils
 import { defaultTemplates } from "./defaultTemplates";
@@ -17,6 +20,7 @@ import {
   deployContract,
   parseBuildLogs,
   getWasmSize,
+  lintContract,
 } from "./utils/buildApi";
 import {
   validateFileName,
@@ -29,6 +33,7 @@ import {
   getReadableFileSize,
   getInitials,
 } from "./utils/fileUtils";
+import { parseErrorsForMonaco, getErrorCounts } from "./utils/errorParser";
 
 // Hooks
 import { useKeyboardShortcuts, useBeforeUnload } from "./hooks/useCustomHooks";
@@ -68,6 +73,21 @@ export default function App() {
   const [isDeploying, setIsDeploying] = useState(false);
   const [lastBuildStatus, setLastBuildStatus] = useState(null);
   const [terminalLogs, setTerminalLogs] = useState([]);
+  
+  // Error Display State
+  const [buildErrors, setBuildErrors] = useState([]);
+  const [showErrorPanel, setShowErrorPanel] = useState(false);
+  
+  // Linting State
+  const [isLinting, setIsLinting] = useState(false);
+  const lintTimeoutRef = useRef(null);
+  
+  // Status Bar State
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
+  
+  // Operation Progress State
+  const [currentOperation, setCurrentOperation] = useState(null); // 'build', 'test', 'deploy', or null
   
   const avatarRef = useRef(null);
   const saveTimeoutRef = useRef({});
@@ -112,11 +132,29 @@ export default function App() {
     return () => document.removeEventListener("click", onDoc);
   }, []);
   
+  // Detect online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+  
   // Cleanup timers
   useEffect(() => {
     return () => {
       Object.values(saveTimeoutRef.current).forEach((t) => clearTimeout(t));
       saveTimeoutRef.current = {};
+      
+      if (lintTimeoutRef.current) {
+        clearTimeout(lintTimeoutRef.current);
+      }
     };
   }, []);
   
@@ -142,6 +180,96 @@ export default function App() {
       }
     ]);
   }, []);
+
+  // Clear Monaco Editor Markers
+  const clearEditorMarkers = useCallback(() => {
+    if (window.monaco) {
+      const models = window.monaco.editor.getModels();
+      models.forEach(model => {
+        window.monaco.editor.setModelMarkers(model, 'rust-compiler', []);
+        window.monaco.editor.setModelMarkers(model, 'rust-analyzer', []);
+      });
+    }
+  }, []);
+
+  // Handle Error Click (Jump to Line)
+  const handleErrorClick = useCallback((error) => {
+    if (error.file) {
+      const file = files.find(f => f.path === error.file);
+      if (file) {
+        setActivePath(file.path);
+        
+        setTimeout(() => {
+          if (window.monacoEditor) {
+            window.monacoEditor.revealLineInCenter(error.line);
+            window.monacoEditor.setPosition({
+              lineNumber: error.line,
+              column: error.column || 1
+            });
+            window.monacoEditor.focus();
+          }
+        }, 100);
+      }
+    }
+  }, [files]);
+
+  // Real-time Linting Handler
+  const runLinting = useCallback(async () => {
+    if (!projectId || isLinting) return;
+
+    setIsLinting(true);
+
+    try {
+      const result = await lintContract(projectId);
+      
+      if (result.success && result.diagnostics) {
+        const monacoErrors = result.diagnostics.map(diag => ({
+          severity: getSeverityNumber(diag.severity),
+          startLineNumber: diag.line,
+          startColumn: diag.column,
+          endLineNumber: diag.end_line || diag.line,
+          endColumn: diag.end_column || (diag.column + 10),
+          message: diag.message,
+          code: diag.code,
+          source: 'rust-analyzer'
+        }));
+
+        if (window.monaco) {
+          const models = window.monaco.editor.getModels();
+          models.forEach(model => {
+            const modelPath = model.uri.path;
+            const errorsForFile = monacoErrors.filter(err => {
+              if (!err.message) return false;
+              const diagFile = result.diagnostics.find(d => d.message === err.message)?.file;
+              return diagFile && (modelPath.endsWith(diagFile) || modelPath === diagFile);
+            });
+            window.monaco.editor.setModelMarkers(model, 'rust-analyzer', errorsForFile);
+          });
+        }
+
+        if (result.diagnostics.some(d => d.severity === 'error')) {
+          console.log('🔍 Linting found', result.diagnostics.length, 'diagnostic(s)');
+        }
+      }
+    } catch (error) {
+      console.error('Linting error:', error);
+    } finally {
+      setIsLinting(false);
+    }
+  }, [projectId, isLinting]);
+
+  // Helper function for severity
+  const getSeverityNumber = (severity) => {
+    if (!window.monaco) return 8;
+    
+    switch (severity) {
+      case 'error': return window.monaco.MarkerSeverity.Error;
+      case 'warning': return window.monaco.MarkerSeverity.Warning;
+      case 'info': return window.monaco.MarkerSeverity.Info;
+      case 'hint': return window.monaco.MarkerSeverity.Hint;
+      default: return window.monaco.MarkerSeverity.Error;
+    }
+  };
 
   // Keyboard shortcuts
   useKeyboardShortcuts([
@@ -184,14 +312,13 @@ export default function App() {
     },
   ]);
 
-  // Project setup - FIXED VERSION
+  // Project setup
   async function ensureProjectStructureForUser() {
     if (!user) return;
     
     try {
       addLog("Initializing project...", "info", "ℹ");
 
-      // Get or create project
       const { data: existingProjects, error: fetchError } = await supabase
         .from("projects")
         .select("*")
@@ -223,7 +350,6 @@ export default function App() {
 
       setProjectId(project.id);
 
-      // Load existing files
       const { data: existingFiles, error: filesError } = await supabase
         .from("files")
         .select("*")
@@ -231,7 +357,6 @@ export default function App() {
 
       if (filesError) throw filesError;
 
-      // If files exist, just load them and exit
       if (existingFiles && existingFiles.length > 0) {
         setFiles(existingFiles);
         
@@ -248,10 +373,9 @@ export default function App() {
         
         setActivePath((prev) => prev || existingFiles[0].path);
         addLog("Project ready!", "success", "✓");
-        return; // EXIT HERE - Don't create template files!
+        return;
       }
 
-      // Only create template files if NO files exist
       const toInsert = defaultTemplates.map((t) => ({
         user_id: user.id,
         project_id: project.id,
@@ -270,7 +394,6 @@ export default function App() {
         addLog(`Created ${toInsert.length} template files`, "success", "✓");
       }
 
-      // Load files
       const { data: newFiles } = await supabase
         .from("files")
         .select("*")
@@ -299,9 +422,12 @@ export default function App() {
     setErrorMap({});
     setTerminalLogs([]);
     setLastBuildStatus(null);
+    setBuildErrors([]);
+    setShowErrorPanel(false);
+    setCurrentOperation(null);
   }
 
-  // Build/Test/Deploy handlers
+  // Build Handler with Error Display and Progress
   const handleBuild = async () => {
     if (!projectId) {
       alert("No project selected");
@@ -309,7 +435,11 @@ export default function App() {
     }
 
     setIsBuilding(true);
+    setCurrentOperation('build');
     setTerminalOpen(true);
+    setBuildErrors([]);
+    setShowErrorPanel(false);
+    clearEditorMarkers();
     addLog("Starting build...", "info", "🔨");
 
     try {
@@ -320,6 +450,28 @@ export default function App() {
         addLog(log.text, log.type, log.type === 'error' ? '✗' : log.type === 'success' ? '✓' : '>');
       });
 
+      if (result.errors && result.errors.length > 0) {
+        const monacoErrors = parseErrorsForMonaco(result.errors, files);
+        setBuildErrors(result.errors);
+        setShowErrorPanel(true);
+        
+        if (window.monaco && activeFile) {
+          const model = window.monaco.editor.getModels().find(
+            m => m.uri.path.endsWith(activeFile.path)
+          );
+          if (model) {
+            window.monaco.editor.setModelMarkers(model, 'rust-compiler', monacoErrors);
+          }
+        }
+        
+        const counts = getErrorCounts(result.errors);
+        addLog(
+          `Found ${counts.error} error(s), ${counts.warning} warning(s)`,
+          'error',
+          '🐛'
+        );
+      }
+
       if (result.success) {
         const size = getWasmSize(result.wasm_base64);
         addLog(`Build successful! WASM size: ${size}`, "success", "✓");
@@ -328,8 +480,12 @@ export default function App() {
           size,
           wasmBase64: result.wasm_base64,
         });
+        
+        setBuildErrors([]);
+        setShowErrorPanel(false);
+        clearEditorMarkers();
       } else {
-        addLog("Build failed. Check logs above for details.", "error", "✗");
+        addLog("Build failed. Check errors above for details.", "error", "✗");
         setLastBuildStatus({ success: false });
       }
     } catch (error) {
@@ -338,6 +494,9 @@ export default function App() {
       setLastBuildStatus({ success: false });
     } finally {
       setIsBuilding(false);
+      setTimeout(() => {
+        setCurrentOperation(null);
+      }, 2000);
     }
   };
   
@@ -348,6 +507,7 @@ export default function App() {
     }
 
     setIsTesting(true);
+    setCurrentOperation('test');
     setTerminalOpen(true);
     addLog("Running tests...", "info", "🧪");
 
@@ -369,6 +529,9 @@ export default function App() {
       addLog(`Test error: ${error.message}`, "error", "✗");
     } finally {
       setIsTesting(false);
+      setTimeout(() => {
+        setCurrentOperation(null);
+      }, 2000);
     }
   };
   
@@ -384,6 +547,7 @@ export default function App() {
     }
 
     setIsDeploying(true);
+    setCurrentOperation('deploy');
     setTerminalOpen(true);
     addLog("Deploying to Stellar testnet...", "info", "🚀");
 
@@ -401,10 +565,13 @@ export default function App() {
       addLog(`Deploy error: ${error.message}`, "error", "✗");
     } finally {
       setIsDeploying(false);
+      setTimeout(() => {
+        setCurrentOperation(null);
+      }, 2000);
     }
   };
 
-  // File operations (keeping your original code)
+  // File operations
   const handleNewFile = async () => {
     if (!user || !projectId) {
       alert("Please sign in first.");
@@ -706,7 +873,7 @@ export default function App() {
     }
   }, [files, addLog]);
 
-  // File content management
+  // File content management WITH LINTING
   const onChange = (val) => {
     if (!user || !activePath || !projectId) return;
 
@@ -743,6 +910,16 @@ export default function App() {
     setSavingMap((s) => ({ ...s, [key]: true }));
     setErrorMap((s) => ({ ...s, [key]: false }));
 
+    // Trigger linting after typing stops
+    if (lintTimeoutRef.current) {
+      clearTimeout(lintTimeoutRef.current);
+    }
+    
+    lintTimeoutRef.current = setTimeout(() => {
+      runLinting();
+    }, 2000);
+
+    // Save logic
     if (saveTimeoutRef.current[key]) {
       clearTimeout(saveTimeoutRef.current[key]);
     }
@@ -914,6 +1091,17 @@ export default function App() {
           </div>
           
           <div className="topbar-right">
+            {buildErrors.length > 0 && (
+              <div 
+                className="error-count-topbar"
+                onClick={() => setShowErrorPanel(true)}
+                title="Click to view problems"
+              >
+                <span className="error-count-topbar-icon">🐛</span>
+                <span>{buildErrors.length} problem{buildErrors.length !== 1 ? 's' : ''}</span>
+              </div>
+            )}
+            
             <div className="keyboard-hint">
               💡 Ctrl+B: Build | Ctrl+T: Test | Ctrl+N: New
             </div>
@@ -956,7 +1144,9 @@ export default function App() {
           hasTerminalLogs={terminalLogs.length > 0}
         />
 
-        <div className="main-content" style={{ marginBottom: terminalOpen ? '300px' : '0' }}>
+        <div className="main-content" style={{ 
+          marginBottom: terminalOpen ? '300px' : showErrorPanel ? '250px' : '26px'
+        }}>
           <FileSidebar
             files={files}
             activePath={activePath}
@@ -990,6 +1180,30 @@ export default function App() {
           isOpen={terminalOpen}
           onClose={() => setTerminalOpen(false)}
           onClear={() => setTerminalLogs([])}
+        />
+
+        {showErrorPanel && (
+          <ErrorPanel
+            errors={buildErrors}
+            onErrorClick={handleErrorClick}
+            onClose={() => setShowErrorPanel(false)}
+          />
+        )}
+
+        <StatusBar
+          file={activeFile}
+          isSaving={activeFile && savingMap[fileKey(activeFile)]}
+          lastSaved={activeFile && lastSavedMap[fileKey(activeFile)]}
+          isOnline={isOnline}
+          cursorPosition={cursorPosition}
+          isLinting={isLinting}
+          errorCount={buildErrors.filter(e => e.severity === 'error').length}
+          warningCount={buildErrors.filter(e => e.severity === 'warning').length}
+        />
+
+        <OperationProgress
+          operation={currentOperation}
+          onClose={() => setCurrentOperation(null)}
         />
       </div>
     </ErrorBoundary>

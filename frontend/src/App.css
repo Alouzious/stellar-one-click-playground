@@ -437,3 +437,42 @@ input:focus-visible {
     display: none !important;
   }
 }
+
+/* ============================================================================
+   ERROR DISPLAY STYLES
+   ============================================================================ */
+
+/* Adjust main content to account for error panel */
+.main-content {
+  position: relative;
+}
+
+.main-content.has-error-panel {
+  padding-bottom: 250px; /* Height of error panel */
+}
+
+/* Error count badge in topbar */
+.error-count-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 59, 48, 0.1);
+  border: 1px solid rgba(255, 59, 48, 0.3);
+  border-radius: 6px;
+  color: #ff3b30;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.error-count-topbar:hover {
+  background: rgba(255, 59, 48, 0.2);
+  border-color: rgba(255, 59, 48, 0.5);
+  transform: translateY(-1px);
+}
+
+.error-count-topbar-icon {
+  font-size: 14px;
+}

@@ -6,6 +6,7 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose, Engine as _};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{env, fs, time::Duration};
 use tempfile::TempDir;
@@ -21,12 +22,27 @@ pub fn build_routes() -> Router<AppState> {
         .route("/projects/:id/deploy", post(deploy_project))
 }
 
+// ============================================================================
+// STRUCTS
+// ============================================================================
+
+#[derive(Serialize, Clone, Debug)]
+struct CompileError {
+    severity: String,  // "error", "warning", "info"
+    message: String,
+    file: String,
+    line: u32,
+    column: u32,
+    code: Option<String>, // Error code like E0425
+}
+
 #[derive(Serialize)]
 struct BuildResponse {
     success: bool,
     logs: String,
     wasm_base64: Option<String>,
     message: Option<String>,
+    errors: Vec<CompileError>, // ← NEW: Error list
 }
 
 #[derive(Serialize)]
@@ -55,6 +71,94 @@ struct DeployRequest {
     wasm_base64: String,
     network: String,
 }
+
+// ============================================================================
+// ERROR PARSING FUNCTION
+// ============================================================================
+
+/// Parse Rust compiler errors from output
+fn parse_rust_errors(output: &str) -> Vec<CompileError> {
+    let mut errors = Vec::new();
+    
+    // Regex patterns for Rust compiler output
+    let error_pattern = Regex::new(
+        r"(?m)^(error|warning|help|note)\[?([^\]]*)\]?: (.+?)$"
+    ).unwrap();
+    
+    let location_pattern = Regex::new(
+        r"-->\s+([^:]+):(\d+):(\d+)"
+    ).unwrap();
+    
+    let lines: Vec<&str> = output.lines().collect();
+    
+    for (i, line) in lines.iter().enumerate() {
+        // Match error/warning line
+        if let Some(caps) = error_pattern.captures(line) {
+            let severity_raw = caps.get(1).map_or("error", |m| m.as_str());
+            let code = caps.get(2).and_then(|m| {
+                let s = m.as_str();
+                if s.is_empty() { None } else { Some(s.to_string()) }
+            });
+            let message = caps.get(3).map_or("Unknown error", |m| m.as_str()).to_string();
+            
+            // Map severity
+            let severity = match severity_raw {
+                "warning" => "warning",
+                "note" | "help" => "info",
+                _ => "error",
+            }.to_string();
+            
+            // Look for location in next few lines
+            let mut file = "unknown".to_string();
+            let mut line_num = 0;
+            let mut col = 0;
+            
+            for j in (i + 1)..(i + 5).min(lines.len()) {
+                if let Some(loc_caps) = location_pattern.captures(lines[j]) {
+                    file = loc_caps.get(1).map_or("unknown", |m| m.as_str()).to_string();
+                    line_num = loc_caps.get(2)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0);
+                    col = loc_caps.get(3)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0);
+                    break;
+                }
+            }
+            
+            // Only add if we found a valid location
+            if line_num > 0 {
+                errors.push(CompileError {
+                    severity,
+                    message,
+                    file: normalize_file_path(&file),
+                    line: line_num,
+                    column: col,
+                    code,
+                });
+            }
+        }
+    }
+    
+    errors
+}
+
+/// Normalize file paths to match frontend structure
+fn normalize_file_path(path: &str) -> String {
+    // Remove /work/ prefix if present
+    let path = path.strip_prefix("/work/").unwrap_or(path);
+    
+    // Add leading slash if not present
+    if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{}", path)
+    }
+}
+
+// ============================================================================
+// BUILD PROJECT
+// ============================================================================
 
 async fn build_project(
     Path(project_id): Path<Uuid>,
@@ -97,6 +201,7 @@ async fn build_project(
             logs: String::new(),
             wasm_base64: None,
             message: Some("No files found for this project".to_string()),
+            errors: vec![],
         }));
     }
 
@@ -133,7 +238,7 @@ async fn build_project(
         })?;
     }
 
-    // 4. Run Docker build - use the runner user's cargo directly
+    // 4. Run Docker build
     let runner_image = env::var("RUNNER_IMAGE").unwrap_or_else(|_| "soroban-runner".to_string());
     let timeout_secs: u64 = env::var("BUILD_TIMEOUT_SECONDS")
         .ok()
@@ -142,7 +247,6 @@ async fn build_project(
 
     let work_dir_str = work_dir.to_string_lossy().to_string();
 
-    // Build script - run as root to fix permissions, then build as runner
     let build_script = r#"
         set -e
         cd /work
@@ -178,7 +282,7 @@ async fn build_project(
     cmd.args([
         "run",
         "--rm",
-        "--user", "root",  // Run as root to fix permissions
+        "--user", "root",
         "--entrypoint", "bash",
         "-v",
         &format!("{}:/work", work_dir_str),
@@ -197,6 +301,7 @@ async fn build_project(
                 logs: format!("Docker command failed: {}", e),
                 wasm_base64: None,
                 message: None,
+                errors: vec![],
             }));
         }
         Err(_) => {
@@ -205,22 +310,36 @@ async fn build_project(
                 logs: format!("Build timed out after {} seconds", timeout_secs),
                 wasm_base64: None,
                 message: None,
+                errors: vec![],
             }));
         }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined_output = format!("{}\n{}", stdout, stderr);
     let logs = format!("status: {:?}\n\nstdout:\n{}\n\nstderr:\n{}", output.status, stdout, stderr);
 
-    // 5. Find and read WASM file - look for any .wasm file
+    // ========================================================================
+    // PARSE ERRORS FROM COMPILER OUTPUT
+    // ========================================================================
+    let parsed_errors = parse_rust_errors(&combined_output);
+    
+    if !parsed_errors.is_empty() {
+        println!("🐛 Found {} compilation errors/warnings", parsed_errors.len());
+        for error in &parsed_errors {
+            println!("  {} [{}:{}:{}] {}", 
+                error.severity, error.file, error.line, error.column, error.message);
+        }
+    }
+
+    // 5. Find and read WASM file
     let wasm_base64 = if output.status.success() {
         let target_dir = work_dir.join("target/wasm32-unknown-unknown/release");
         if let Ok(entries) = fs::read_dir(&target_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("wasm") {
-                    // Skip .d files
                     if path.to_string_lossy().contains(".d") {
                         continue;
                     }
@@ -231,6 +350,7 @@ async fn build_project(
                             logs: format!("{}\n\n✅ Found WASM file: {}", logs, wasm_filename),
                             wasm_base64: Some(general_purpose::STANDARD.encode(&wasm_bytes)),
                             message: Some(format!("Built successfully: {}", wasm_filename)),
+                            errors: parsed_errors, // Include warnings even on success
                         }));
                     }
                 }
@@ -248,6 +368,7 @@ async fn build_project(
         success,
         logs,
         wasm_base64,
+        errors: parsed_errors, // ← NEW: Include errors
         message: if !has_wasm && output.status.success() {
             Some("Build succeeded but no WASM file found".to_string())
         } else {
@@ -255,6 +376,10 @@ async fn build_project(
         },
     }))
 }
+
+// ============================================================================
+// TEST PROJECT
+// ============================================================================
 
 async fn test_project(
     Path(project_id): Path<Uuid>,
@@ -410,6 +535,10 @@ async fn test_project(
     }))
 }
 
+// ============================================================================
+// DEPLOY PROJECT
+// ============================================================================
+
 async fn deploy_project(
     Path(project_id): Path<Uuid>,
     State(_state): State<AppState>,
@@ -444,11 +573,10 @@ async fn deploy_project(
     let timeout_secs: u64 = env::var("DEPLOY_TIMEOUT_SECONDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(600); // 10 minutes default for deployment
+        .unwrap_or(600);
 
     let work_dir_str = work_dir.to_string_lossy().to_string();
 
-    // Deployment script - uses the runner's deploy.sh but with custom WASM
     let deploy_script = format!(r#"
         set -e
         
@@ -547,7 +675,6 @@ async fn deploy_project(
         .and_then(|line| line.split(':').nth(1))
         .map(|id| id.trim().to_string())
         .or_else(|| {
-            // Try to find a contract ID in the output (starts with C and is 56 chars)
             stdout
                 .lines()
                 .find(|line| line.contains("C") && line.len() >= 56)

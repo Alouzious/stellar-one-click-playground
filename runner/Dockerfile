@@ -24,7 +24,7 @@ RUN set -euo pipefail; \
   mv "${binpath}" /usr/local/bin/stellar; \
   chmod +x /usr/local/bin/stellar; \
   stellar --version; \
-  rm -rf /tmp/stellar /tmp/stellar-cli.tar. gz
+  rm -rf /tmp/stellar /tmp/stellar-cli.tar.gz
 
 # Create non-root user
 RUN useradd -m -u 10001 runner
@@ -56,5 +56,10 @@ RUN set -euo pipefail; \
   rustc --version; \
   cargo --version; \
   rustup target add wasm32-unknown-unknown wasm32v1-none
+
+# Install rust-analyzer for real-time linting
+RUN set -euo pipefail; \
+  rustup component add rust-analyzer; \
+  rust-analyzer --version
 
 ENTRYPOINT ["/runner/scripts/deploy.sh"]

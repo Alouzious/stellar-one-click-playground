@@ -1,6 +1,6 @@
 use axum::Router;
 use crate::state::AppState;
-use crate::routes::{file::file_routes, project::project_routes, build::build_routes,};
+use crate::routes::{file::file_routes, project::project_routes, build::build_routes,lint::lint_routes,};
 
 // CORS imports
 use tower_http::cors::{CorsLayer, Any};
@@ -17,6 +17,7 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api/files", file_routes())
         .nest("/api/projects", project_routes())
         .nest("/api", build_routes())
+        .nest("/api", lint_routes())
         .with_state(state)
         .layer(cors)
 }

@@ -81,6 +81,31 @@ export async function deployContract(projectId, wasmBase64) {
 }
 
 /**
+ * Run real-time linting on the project
+ */
+export async function lintContract(projectId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/projects/${projectId}/lint`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Lint failed: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Lint error:', error);
+    throw error;
+  }
+}
+
+/**
  * Parse build logs into structured format
  */
 export function parseBuildLogs(logs) {
