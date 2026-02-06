@@ -1,6 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 
+// React Icons
+import { 
+  FaDownload, 
+  FaUpload, 
+  FaBug, 
+  FaSignOutAlt, 
+  FaBoxOpen,
+  FaUserCircle,
+  FaLock
+} from "react-icons/fa";
+import { SiRust } from "react-icons/si";
+
 // Components
 import ErrorBoundary from "./components/ErrorBoundary";
 import FileSidebar from "./components/FileSidebar";
@@ -10,7 +22,6 @@ import Terminal from "./components/Terminal";
 import WelcomeScreen from "./components/WelcomeScreen";
 import ErrorPanel from "./components/ErrorPanel";
 import StatusBar from "./components/StatusBar";
-import OperationProgress from "./components/OperationProgress";
 
 // Data & Utils
 import { defaultTemplates } from "./defaultTemplates";
@@ -86,8 +97,8 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
   
-  // Operation Progress State
-  const [currentOperation, setCurrentOperation] = useState(null); // 'build', 'test', 'deploy', or null
+  // Simple operation state (no popup)
+  const [currentOperation, setCurrentOperation] = useState(null);
   
   const avatarRef = useRef(null);
   const saveTimeoutRef = useRef({});
@@ -99,7 +110,6 @@ export default function App() {
   // Hooks
   useBeforeUnload(hasUnsavedChanges);
   
-  // Check if user has visited before
   useEffect(() => {
     const hasVisited = localStorage.getItem('hasVisitedIDE');
     if (hasVisited) {
@@ -107,7 +117,6 @@ export default function App() {
     }
   }, []);
   
-  // Authentication
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setUser(data.session?.user ?? null);
@@ -121,7 +130,6 @@ export default function App() {
     return () => subscription?.unsubscribe?.();
   }, []);
   
-  // Close avatar dropdown
   useEffect(() => {
     const onDoc = (e) => {
       if (avatarRef.current && !avatarRef.current.contains(e.target)) {
@@ -132,7 +140,6 @@ export default function App() {
     return () => document.removeEventListener("click", onDoc);
   }, []);
   
-  // Detect online/offline status
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -146,7 +153,6 @@ export default function App() {
     };
   }, []);
   
-  // Cleanup timers
   useEffect(() => {
     return () => {
       Object.values(saveTimeoutRef.current).forEach((t) => clearTimeout(t));
@@ -158,7 +164,6 @@ export default function App() {
     };
   }, []);
   
-  // When user changes
   useEffect(() => {
     if (user) {
       ensureProjectStructureForUser();
@@ -168,7 +173,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Terminal logging
   const addLog = useCallback((text, type = 'default', prefix = '>') => {
     setTerminalLogs(prev => [
       ...prev,
@@ -181,7 +185,6 @@ export default function App() {
     ]);
   }, []);
 
-  // Clear Monaco Editor Markers
   const clearEditorMarkers = useCallback(() => {
     if (window.monaco) {
       const models = window.monaco.editor.getModels();
@@ -192,7 +195,6 @@ export default function App() {
     }
   }, []);
 
-  // Handle Error Click (Jump to Line)
   const handleErrorClick = useCallback((error) => {
     if (error.file) {
       const file = files.find(f => f.path === error.file);
@@ -213,7 +215,6 @@ export default function App() {
     }
   }, [files]);
 
-  // Real-time Linting Handler
   const runLinting = useCallback(async () => {
     if (!projectId || isLinting) return;
 
@@ -258,7 +259,6 @@ export default function App() {
     }
   }, [projectId, isLinting]);
 
-  // Helper function for severity
   const getSeverityNumber = (severity) => {
     if (!window.monaco) return 8;
     
@@ -271,7 +271,6 @@ export default function App() {
     }
   };
 
-  // Keyboard shortcuts
   useKeyboardShortcuts([
     {
       key: "n",
@@ -312,7 +311,6 @@ export default function App() {
     },
   ]);
 
-  // Project setup
   async function ensureProjectStructureForUser() {
     if (!user) return;
     
@@ -427,7 +425,9 @@ export default function App() {
     setCurrentOperation(null);
   }
 
-  // Build Handler with Error Display and Progress
+  // ========================================================================
+  // Build Handler - Progress in Terminal Only
+  // ========================================================================
   const handleBuild = async () => {
     if (!projectId) {
       alert("No project selected");
@@ -440,10 +440,22 @@ export default function App() {
     setBuildErrors([]);
     setShowErrorPanel(false);
     clearEditorMarkers();
-    addLog("Starting build...", "info", "🔨");
+    
+    addLog("╔══════════════════════════════════════════════════════════╗", "info", "");
+    addLog("║         🔨 STARTING BUILD PROCESS                       ║", "info", "");
+    addLog("╚══════════════════════════════════════════════════════════╝", "info", "");
+    addLog("", "default", "");
 
     try {
       const result = await buildContract(projectId);
+      
+      // Show progress updates in terminal
+      if (result.progress_updates && result.progress_updates.length > 0) {
+        result.progress_updates.forEach(update => {
+          addLog(`[${update.progress}%] ${update.step}`, "info", "📊");
+          addLog(`      ➜ ${update.message}`, "default", "");
+        });
+      }
       
       const parsedLogs = parseBuildLogs(result.logs);
       parsedLogs.forEach(log => {
@@ -465,16 +477,17 @@ export default function App() {
         }
         
         const counts = getErrorCounts(result.errors);
-        addLog(
-          `Found ${counts.error} error(s), ${counts.warning} warning(s)`,
-          'error',
-          '🐛'
-        );
+        addLog("", "default", "");
+        addLog(`Found ${counts.error} error(s), ${counts.warning} warning(s)`, 'error', '🐛');
       }
 
       if (result.success) {
         const size = getWasmSize(result.wasm_base64);
-        addLog(`Build successful! WASM size: ${size}`, "success", "✓");
+        addLog("", "default", "");
+        addLog("╔══════════════════════════════════════════════════════════╗", "success", "");
+        addLog(`║  ✅ BUILD SUCCESSFUL - WASM: ${size.padEnd(26)} ║`, "success", "");
+        addLog("╚══════════════════════════════════════════════════════════╝", "success", "");
+        
         setLastBuildStatus({
           success: true,
           size,
@@ -485,21 +498,26 @@ export default function App() {
         setShowErrorPanel(false);
         clearEditorMarkers();
       } else {
-        addLog("Build failed. Check errors above for details.", "error", "✗");
+        addLog("", "default", "");
+        addLog("╔══════════════════════════════════════════════════════════╗", "error", "");
+        addLog("║  ❌ BUILD FAILED - Check errors above                   ║", "error", "");
+        addLog("╚══════════════════════════════════════════════════════════╝", "error", "");
         setLastBuildStatus({ success: false });
       }
     } catch (error) {
       console.error("Build error:", error);
+      addLog("", "default", "");
       addLog(`Build error: ${error.message}`, "error", "✗");
       setLastBuildStatus({ success: false });
     } finally {
       setIsBuilding(false);
-      setTimeout(() => {
-        setCurrentOperation(null);
-      }, 2000);
+      setCurrentOperation(null);
     }
   };
   
+  // ========================================================================
+  // Test Handler - Progress in Terminal Only (TESTS CURRENT FILE)
+  // ========================================================================
   const handleTest = async () => {
     if (!projectId) {
       alert("No project selected");
@@ -509,10 +527,27 @@ export default function App() {
     setIsTesting(true);
     setCurrentOperation('test');
     setTerminalOpen(true);
-    addLog("Running tests...", "info", "🧪");
+    
+    // Determine what's being tested
+    const testDescription = activeFile 
+      ? `Testing: ${activeFile.name}` 
+      : "Testing all contracts";
+    
+    addLog("╔══════════════════════════════════════════════════════════╗", "info", "");
+    addLog(`║         🧪 ${testDescription.padEnd(43)} ║`, "info", "");
+    addLog("╚══════════════════════════════════════════════════════════╝", "info", "");
+    addLog("", "default", "");
 
     try {
-      const result = await testContract(projectId);
+      // Pass active file path to backend
+      const result = await testContract(projectId, activeFile?.path);
+      
+      if (result.progress_updates && result.progress_updates.length > 0) {
+        result.progress_updates.forEach(update => {
+          addLog(`[${update.progress}%] ${update.step}`, "info", "📊");
+          addLog(`      ➜ ${update.message}`, "default", "");
+        });
+      }
       
       const parsedLogs = parseBuildLogs(result.logs);
       parsedLogs.forEach(log => {
@@ -520,21 +555,29 @@ export default function App() {
       });
 
       if (result.success) {
-        addLog("All tests passed!", "success", "✓");
+        addLog("", "default", "");
+        addLog("╔══════════════════════════════════════════════════════════╗", "success", "");
+        addLog("║  ✅ ALL TESTS PASSED                                     ║", "success", "");
+        addLog("╚══════════════════════════════════════════════════════════╝", "success", "");
       } else {
-        addLog("Tests failed. Check logs above for details.", "error", "✗");
+        addLog("", "default", "");
+        addLog("╔══════════════════════════════════════════════════════════╗", "error", "");
+        addLog("║  ❌ TESTS FAILED - Check logs above                     ║", "error", "");
+        addLog("╚══════════════════════════════════════════════════════════╝", "error", "");
       }
     } catch (error) {
       console.error("Test error:", error);
+      addLog("", "default", "");
       addLog(`Test error: ${error.message}`, "error", "✗");
     } finally {
       setIsTesting(false);
-      setTimeout(() => {
-        setCurrentOperation(null);
-      }, 2000);
+      setCurrentOperation(null);
     }
   };
   
+  // ========================================================================
+  // Deploy Handler - Progress in Terminal Only
+  // ========================================================================
   const handleDeploy = async () => {
     if (!projectId) {
       alert("No project selected");
@@ -549,25 +592,41 @@ export default function App() {
     setIsDeploying(true);
     setCurrentOperation('deploy');
     setTerminalOpen(true);
-    addLog("Deploying to Stellar testnet...", "info", "🚀");
+    
+    addLog("╔══════════════════════════════════════════════════════════╗", "info", "");
+    addLog("║         🚀 DEPLOYING TO STELLAR TESTNET                  ║", "info", "");
+    addLog("╚══════════════════════════════════════════════════════════╝", "info", "");
+    addLog("", "default", "");
 
     try {
       const result = await deployContract(projectId, lastBuildStatus.wasmBase64);
       
+      if (result.progress_updates && result.progress_updates.length > 0) {
+        result.progress_updates.forEach(update => {
+          addLog(`[${update.progress}%] ${update.step}`, "info", "📊");
+          addLog(`      ➜ ${update.message}`, "default", "");
+        });
+      }
+      
       if (result.success) {
-        addLog(`Contract deployed successfully!`, "success", "✓");
-        addLog(`Contract ID: ${result.contract_id}`, "info", "ℹ");
+        addLog("", "default", "");
+        addLog("╔══════════════════════════════════════════════════════════╗", "success", "");
+        addLog("║  ✅ DEPLOYMENT SUCCESSFUL                                ║", "success", "");
+        addLog("╚══════════════════════════════════════════════════════════╝", "success", "");
+        addLog(`Contract ID: ${result.contract_id}`, "success", "🎉");
       } else {
-        addLog("Deploy failed. Check logs above for details.", "error", "✗");
+        addLog("", "default", "");
+        addLog("╔══════════════════════════════════════════════════════════╗", "error", "");
+        addLog("║  ❌ DEPLOYMENT FAILED - Check logs above                ║", "error", "");
+        addLog("╚══════════════════════════════════════════════════════════╝", "error", "");
       }
     } catch (error) {
       console.error("Deploy error:", error);
+      addLog("", "default", "");
       addLog(`Deploy error: ${error.message}`, "error", "✗");
     } finally {
       setIsDeploying(false);
-      setTimeout(() => {
-        setCurrentOperation(null);
-      }, 2000);
+      setCurrentOperation(null);
     }
   };
 
@@ -873,7 +932,6 @@ export default function App() {
     }
   }, [files, addLog]);
 
-  // File content management WITH LINTING
   const onChange = (val) => {
     if (!user || !activePath || !projectId) return;
 
@@ -910,7 +968,6 @@ export default function App() {
     setSavingMap((s) => ({ ...s, [key]: true }));
     setErrorMap((s) => ({ ...s, [key]: false }));
 
-    // Trigger linting after typing stops
     if (lintTimeoutRef.current) {
       clearTimeout(lintTimeoutRef.current);
     }
@@ -919,7 +976,6 @@ export default function App() {
       runLinting();
     }, 2000);
 
-    // Save logic
     if (saveTimeoutRef.current[key]) {
       clearTimeout(saveTimeoutRef.current[key]);
     }
@@ -958,7 +1014,6 @@ export default function App() {
     }, 700);
   };
 
-  // Auth handlers
   const signInWithGoogle = async () => {
     try {
       await supabase.auth.signInWithOAuth({ provider: "google" });
@@ -984,7 +1039,6 @@ export default function App() {
     }
   };
 
-  // Welcome screen handlers
   const handleGetStarted = () => {
     localStorage.setItem('hasVisitedIDE', 'true');
     setShowWelcome(false);
@@ -996,7 +1050,6 @@ export default function App() {
     setActivePath('/contract/voting.rs');
   };
 
-  // Helpers
   const fileKey = (f) => f?.id || f?.path;
   
   function getStatusForFile(f) {
@@ -1011,7 +1064,6 @@ export default function App() {
     return { status: "idle", text: "" };
   }
 
-  // Render
   if (loggingIn) {
     return (
       <div className="loading-container">
@@ -1024,11 +1076,13 @@ export default function App() {
     return (
       <div className="login-container">
         <div className="login-box">
-          <div className="login-icon">🦀</div>
+          <div className="login-icon">
+            <SiRust style={{ fontSize: '64px', color: '#CE422B' }} />
+          </div>
           <h1 className="login-title">Soroban IDE</h1>
           <p className="login-subtitle">Build smart contracts for Stellar</p>
           <button onClick={signInWithGoogle} className="google-signin-btn">
-            <span>🔐</span>
+            <FaLock />
             <span>Continue with Google</span>
           </button>
         </div>
@@ -1058,7 +1112,7 @@ export default function App() {
         <div className="topbar">
           <div className="topbar-left">
             <div className="app-logo">
-              <span className="app-logo-icon">🦀</span>
+              <SiRust className="app-logo-icon" style={{ color: '#CE422B' }} />
               <span>Soroban IDE</span>
             </div>
             
@@ -1069,7 +1123,8 @@ export default function App() {
                 disabled={!activeFile}
                 title="Download current file"
               >
-                ⬇️ Download
+                <FaDownload />
+                <span>Download</span>
               </button>
               
               <button
@@ -1077,7 +1132,8 @@ export default function App() {
                 onClick={() => fileInputRef.current?.click()}
                 title="Upload file"
               >
-                ⬆️ Upload
+                <FaUpload />
+                <span>Upload</span>
               </button>
               
               <input
@@ -1097,7 +1153,7 @@ export default function App() {
                 onClick={() => setShowErrorPanel(true)}
                 title="Click to view problems"
               >
-                <span className="error-count-topbar-icon">🐛</span>
+                <FaBug className="error-count-topbar-icon" />
                 <span>{buildErrors.length} problem{buildErrors.length !== 1 ? 's' : ''}</span>
               </div>
             )}
@@ -1112,7 +1168,7 @@ export default function App() {
                 onClick={() => setAvatarOpen((s) => !s)}
                 title="Account"
               >
-                {initials}
+                <FaUserCircle style={{ fontSize: '24px' }} />
               </button>
               {avatarOpen && (
                 <div className="avatar-dropdown">
@@ -1120,10 +1176,12 @@ export default function App() {
                     {user.user_metadata?.name || user.email}
                   </div>
                   <button className="dropdown-btn" onClick={handleDownloadAll}>
-                    📦 Download All Files
+                    <FaBoxOpen />
+                    <span>Download All Files</span>
                   </button>
                   <button className="dropdown-btn" onClick={signOut}>
-                    🚪 Sign Out
+                    <FaSignOutAlt />
+                    <span>Sign Out</span>
                   </button>
                 </div>
               )}
@@ -1199,11 +1257,6 @@ export default function App() {
           isLinting={isLinting}
           errorCount={buildErrors.filter(e => e.severity === 'error').length}
           warningCount={buildErrors.filter(e => e.severity === 'warning').length}
-        />
-
-        <OperationProgress
-          operation={currentOperation}
-          onClose={() => setCurrentOperation(null)}
         />
       </div>
     </ErrorBoundary>

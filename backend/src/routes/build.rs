@@ -28,12 +28,19 @@ pub fn build_routes() -> Router<AppState> {
 
 #[derive(Serialize, Clone, Debug)]
 struct CompileError {
-    severity: String,  // "error", "warning", "info"
+    severity: String,
     message: String,
     file: String,
     line: u32,
     column: u32,
-    code: Option<String>, // Error code like E0425
+    code: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct ProgressUpdate {
+    progress: u8,
+    step: String,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -42,7 +49,8 @@ struct BuildResponse {
     logs: String,
     wasm_base64: Option<String>,
     message: Option<String>,
-    errors: Vec<CompileError>, // ← NEW: Error list
+    errors: Vec<CompileError>,
+    progress_updates: Vec<ProgressUpdate>,
 }
 
 #[derive(Serialize)]
@@ -50,6 +58,7 @@ struct TestResponse {
     success: bool,
     logs: String,
     message: Option<String>,
+    progress_updates: Vec<ProgressUpdate>,
 }
 
 #[derive(Serialize)]
@@ -58,13 +67,17 @@ struct DeployResponse {
     contract_id: Option<String>,
     logs: String,
     message: Option<String>,
+    progress_updates: Vec<ProgressUpdate>,
 }
 
 #[derive(Deserialize)]
 struct BuildRequest {}
 
 #[derive(Deserialize)]
-struct TestRequest {}
+struct TestRequest {
+    #[serde(default)]
+    pub active_file: Option<String>,
+}
 
 #[derive(Deserialize)]
 struct DeployRequest {
@@ -73,14 +86,116 @@ struct DeployRequest {
 }
 
 // ============================================================================
-// ERROR PARSING FUNCTION
+// HELPER: Determine which test file to run based on active file
 // ============================================================================
 
-/// Parse Rust compiler errors from output
+fn get_test_file_from_active(active_file: &Option<String>) -> Option<String> {
+    if let Some(path) = active_file {
+        // If user is in a test file, run that test
+        if path.starts_with("/tests/") && path.ends_with(".rs") {
+            let filename = path.trim_start_matches("/tests/").trim_end_matches(".rs");
+            return Some(filename.to_string());
+        }
+        
+        // If user is in contract files, map to corresponding tests
+        if path.contains("lib.rs") {
+            return Some("test".to_string());
+        } else if path.contains("voting.rs") {
+            return Some("voting".to_string());
+        } else if path.contains("token.rs") {
+            return Some("token".to_string());
+        }
+    }
+    None // Run all tests if no specific match
+}
+
+// ============================================================================
+// PROGRESS TRACKING
+// ============================================================================
+
+fn estimate_progress_from_logs(logs: &str, operation: &str) -> Vec<ProgressUpdate> {
+    let mut updates = Vec::new();
+    
+    match operation {
+        "build" => {
+            if logs.contains("Compiling") {
+                let count = logs.matches("Compiling").count();
+                let progress = (20 + (count * 10).min(50)) as u8;
+                updates.push(ProgressUpdate {
+                    progress,
+                    step: format!("Compiling ({} crates)", count),
+                    message: "Building dependencies and contract code...".to_string(),
+                });
+            }
+            if logs.contains("Finished") {
+                updates.push(ProgressUpdate {
+                    progress: 90,
+                    step: "Compilation complete".to_string(),
+                    message: "Generating WASM binary...".to_string(),
+                });
+            }
+        }
+        "test" => {
+            if logs.contains("running") && logs.contains("test") {
+                let test_count = logs.matches("test ").count();
+                let progress = (30 + (test_count * 5).min(60)) as u8;
+                updates.push(ProgressUpdate {
+                    progress,
+                    step: format!("Running tests ({} tests)", test_count),
+                    message: "Executing test suite...".to_string(),
+                });
+            }
+            if logs.contains("test result:") {
+                updates.push(ProgressUpdate {
+                    progress: 95,
+                    step: "Tests completed".to_string(),
+                    message: "Collecting results...".to_string(),
+                });
+            }
+        }
+        "deploy" => {
+            if logs.contains("Generating deployment identity") {
+                updates.push(ProgressUpdate {
+                    progress: 20,
+                    step: "Creating deployer account".to_string(),
+                    message: "Generating keypair...".to_string(),
+                });
+            }
+            if logs.contains("Deployer address") {
+                updates.push(ProgressUpdate {
+                    progress: 40,
+                    step: "Funding account".to_string(),
+                    message: "Requesting testnet XLM...".to_string(),
+                });
+            }
+            if logs.contains("Deploying contract") {
+                updates.push(ProgressUpdate {
+                    progress: 60,
+                    step: "Uploading to network".to_string(),
+                    message: "Submitting transaction...".to_string(),
+                });
+            }
+            if logs.contains("Contract ID:") {
+                updates.push(ProgressUpdate {
+                    progress: 95,
+                    step: "Deployment complete".to_string(),
+                    message: "Contract is live!".to_string(),
+                });
+            }
+        }
+        _ => {}
+    }
+    
+    updates
+}
+
+// ============================================================================
+// ERROR PARSING
+// ============================================================================
+
 fn parse_rust_errors(output: &str) -> Vec<CompileError> {
     let mut errors = Vec::new();
     
-    // Regex patterns for Rust compiler output
     let error_pattern = Regex::new(
         r"(?m)^(error|warning|help|note)\[?([^\]]*)\]?: (.+?)$"
     ).unwrap();
@@ -92,7 +207,6 @@ fn parse_rust_errors(output: &str) -> Vec<CompileError> {
     let lines: Vec<&str> = output.lines().collect();
     
     for (i, line) in lines.iter().enumerate() {
-        // Match error/warning line
         if let Some(caps) = error_pattern.captures(line) {
             let severity_raw = caps.get(1).map_or("error", |m| m.as_str());
             let code = caps.get(2).and_then(|m| {
@@ -101,14 +215,12 @@ fn parse_rust_errors(output: &str) -> Vec<CompileError> {
             });
             let message = caps.get(3).map_or("Unknown error", |m| m.as_str()).to_string();
             
-            // Map severity
             let severity = match severity_raw {
                 "warning" => "warning",
                 "note" | "help" => "info",
                 _ => "error",
             }.to_string();
             
-            // Look for location in next few lines
             let mut file = "unknown".to_string();
             let mut line_num = 0;
             let mut col = 0;
@@ -126,7 +238,6 @@ fn parse_rust_errors(output: &str) -> Vec<CompileError> {
                 }
             }
             
-            // Only add if we found a valid location
             if line_num > 0 {
                 errors.push(CompileError {
                     severity,
@@ -143,12 +254,8 @@ fn parse_rust_errors(output: &str) -> Vec<CompileError> {
     errors
 }
 
-/// Normalize file paths to match frontend structure
 fn normalize_file_path(path: &str) -> String {
-    // Remove /work/ prefix if present
     let path = path.strip_prefix("/work/").unwrap_or(path);
-    
-    // Add leading slash if not present
     if path.starts_with('/') {
         path.to_string()
     } else {
@@ -165,14 +272,10 @@ async fn build_project(
     State(state): State<AppState>,
     Json(_req): Json<BuildRequest>,
 ) -> Result<Json<BuildResponse>, (StatusCode, String)> {
-    // 1. Fetch files from Supabase
     let supabase_url = &state.supabase_url;
     let supabase_key = &state.supabase_service_role_key;
 
-    let url = format!(
-        "{}/rest/v1/files?project_id=eq.{}",
-        supabase_url, project_id
-    );
+    let url = format!("{}/rest/v1/files?project_id=eq.{}", supabase_url, project_id);
 
     let response = state
         .http_client
@@ -181,18 +284,10 @@ async fn build_project(
         .header("Authorization", format!("Bearer {}", supabase_key))
         .send()
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to fetch files: {}", e),
-            )
-        })?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to fetch files: {}", e)))?;
 
     let files: Vec<serde_json::Value> = response.json().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to parse files: {}", e),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse files: {}", e))
     })?;
 
     if files.is_empty() {
@@ -202,43 +297,31 @@ async fn build_project(
             wasm_base64: None,
             message: Some("No files found for this project".to_string()),
             errors: vec![],
+            progress_updates: vec![],
         }));
     }
 
-    // 2. Create temp directory
     let temp_dir = TempDir::new().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create temp dir: {}", e),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create temp dir: {}", e))
     })?;
 
     let work_dir = temp_dir.path();
 
-    // 3. Write files to temp directory
     for file in &files {
         let path_str = file["path"].as_str().unwrap_or("");
         let content = file["content"].as_str().unwrap_or("");
-
         let file_path = work_dir.join(path_str.trim_start_matches('/'));
+        
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to create directories: {}", e),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create directories: {}", e))
             })?;
         }
-
         fs::write(&file_path, content).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to write file: {}", e),
-            )
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write file: {}", e))
         })?;
     }
 
-    // 4. Run Docker build
     let runner_image = env::var("RUNNER_IMAGE").unwrap_or_else(|_| "soroban-runner".to_string());
     let timeout_secs: u64 = env::var("BUILD_TIMEOUT_SECONDS")
         .ok()
@@ -250,47 +333,25 @@ async fn build_project(
     let build_script = r#"
         set -e
         cd /work
-        
-        # Fix ownership to runner user
         chown -R runner:runner /work
         
         echo "=== Building Soroban Contract ==="
-        echo "Running as: $(whoami)"
-        echo ""
-        
-        # Now switch to runner and build
         su runner -c '
             set -e
             cd /work
-            echo "Switched to user: $(whoami)"
-            echo "Files in /work:"
-            ls -la /work
-            echo ""
-            echo "Building with cargo..."
+            echo "Starting build..."
             /home/runner/.cargo/bin/cargo build --target wasm32-unknown-unknown --release 2>&1
-            echo ""
-            echo "Build complete. Checking output..."
-            if [ -d "target/wasm32-unknown-unknown/release" ]; then
-                ls -la target/wasm32-unknown-unknown/release/ | grep .wasm || echo "No WASM files found"
-            else
-                echo "Target directory not created"
-            fi
+            echo "Build finished."
         '
     "#;
 
     let mut cmd = Command::new("docker");
     cmd.args([
-        "run",
-        "--rm",
-        "--user", "root",
-        "--entrypoint", "bash",
-        "-v",
-        &format!("{}:/work", work_dir_str),
-        "-w",
-        "/work",
+        "run", "--rm", "--user", "root", "--entrypoint", "bash",
+        "-v", &format!("{}:/work", work_dir_str),
+        "-w", "/work",
         &runner_image,
-        "-c",
-        build_script,
+        "-c", build_script,
     ]);
 
     let output = match timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
@@ -302,6 +363,7 @@ async fn build_project(
                 wasm_base64: None,
                 message: None,
                 errors: vec![],
+                progress_updates: vec![],
             }));
         }
         Err(_) => {
@@ -311,6 +373,7 @@ async fn build_project(
                 wasm_base64: None,
                 message: None,
                 errors: vec![],
+                progress_updates: vec![],
             }));
         }
     };
@@ -320,20 +383,9 @@ async fn build_project(
     let combined_output = format!("{}\n{}", stdout, stderr);
     let logs = format!("status: {:?}\n\nstdout:\n{}\n\nstderr:\n{}", output.status, stdout, stderr);
 
-    // ========================================================================
-    // PARSE ERRORS FROM COMPILER OUTPUT
-    // ========================================================================
     let parsed_errors = parse_rust_errors(&combined_output);
-    
-    if !parsed_errors.is_empty() {
-        println!("🐛 Found {} compilation errors/warnings", parsed_errors.len());
-        for error in &parsed_errors {
-            println!("  {} [{}:{}:{}] {}", 
-                error.severity, error.file, error.line, error.column, error.message);
-        }
-    }
+    let progress_updates = estimate_progress_from_logs(&combined_output, "build");
 
-    // 5. Find and read WASM file
     let wasm_base64 = if output.status.success() {
         let target_dir = work_dir.join("target/wasm32-unknown-unknown/release");
         if let Ok(entries) = fs::read_dir(&target_dir) {
@@ -350,7 +402,8 @@ async fn build_project(
                             logs: format!("{}\n\n✅ Found WASM file: {}", logs, wasm_filename),
                             wasm_base64: Some(general_purpose::STANDARD.encode(&wasm_bytes)),
                             message: Some(format!("Built successfully: {}", wasm_filename)),
-                            errors: parsed_errors, // Include warnings even on success
+                            errors: parsed_errors,
+                            progress_updates,
                         }));
                     }
                 }
@@ -368,7 +421,8 @@ async fn build_project(
         success,
         logs,
         wasm_base64,
-        errors: parsed_errors, // ← NEW: Include errors
+        errors: parsed_errors,
+        progress_updates,
         message: if !has_wasm && output.status.success() {
             Some("Build succeeded but no WASM file found".to_string())
         } else {
@@ -378,22 +432,18 @@ async fn build_project(
 }
 
 // ============================================================================
-// TEST PROJECT
+// TEST PROJECT - SMART TESTING (ONLY ACTIVE FILE)
 // ============================================================================
 
 async fn test_project(
     Path(project_id): Path<Uuid>,
     State(state): State<AppState>,
-    Json(_req): Json<TestRequest>,
+    Json(req): Json<TestRequest>,
 ) -> Result<Json<TestResponse>, (StatusCode, String)> {
-    // 1. Fetch files from Supabase
     let supabase_url = &state.supabase_url;
     let supabase_key = &state.supabase_service_role_key;
 
-    let url = format!(
-        "{}/rest/v1/files?project_id=eq.{}",
-        supabase_url, project_id
-    );
+    let url = format!("{}/rest/v1/files?project_id=eq.{}", supabase_url, project_id);
 
     let response = state
         .http_client
@@ -402,104 +452,83 @@ async fn test_project(
         .header("Authorization", format!("Bearer {}", supabase_key))
         .send()
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to fetch files: {}", e),
-            )
-        })?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to fetch files: {}", e)))?;
 
     let files: Vec<serde_json::Value> = response.json().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to parse files: {}", e),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse files: {}", e))
     })?;
 
     if files.is_empty() {
         return Ok(Json(TestResponse {
             success: false,
             logs: String::new(),
-            message: Some("No files found for this project".to_string()),
+            message: Some("No files found".to_string()),
+            progress_updates: vec![],
         }));
     }
 
-    // 2. Create temp directory
     let temp_dir = TempDir::new().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create temp dir: {}", e),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create temp dir: {}", e))
     })?;
 
     let work_dir = temp_dir.path();
 
-    // 3. Write files to temp directory
     for file in &files {
         let path_str = file["path"].as_str().unwrap_or("");
         let content = file["content"].as_str().unwrap_or("");
-
         let file_path = work_dir.join(path_str.trim_start_matches('/'));
+        
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to create directories: {}", e),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create directories: {}", e))
             })?;
         }
-
         fs::write(&file_path, content).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to write file: {}", e),
-            )
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write file: {}", e))
         })?;
     }
 
-    // 4. Run cargo test
     let runner_image = env::var("RUNNER_IMAGE").unwrap_or_else(|_| "soroban-runner".to_string());
-    let timeout_secs: u64 = env::var("TEST_TIMEOUT_SECONDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1200);
-
+    let timeout_secs: u64 = 1200;
     let work_dir_str = work_dir.to_string_lossy().to_string();
 
-    let test_script = r#"
+    // ========================================================================
+    // SMART TESTING: Determine which test to run based on active file
+    // ========================================================================
+    let test_file = get_test_file_from_active(&req.active_file);
+    
+    let (test_command, test_description) = if let Some(test_name) = test_file {
+        (
+            format!("/home/runner/.cargo/bin/cargo test --test {} 2>&1", test_name),
+            format!("Running tests for: {}.rs", test_name)
+        )
+    } else {
+        (
+            "/home/runner/.cargo/bin/cargo test 2>&1".to_string(),
+            "Running ALL tests".to_string()
+        )
+    };
+
+    let test_script = format!(r#"
         set -e
         cd /work
-        
-        # Fix ownership to runner user
         chown -R runner:runner /work
         
-        echo "=== Running Tests ==="
-        echo "Running as: $(whoami)"
-        echo ""
-        
-        # Switch to runner and run tests
+        echo "=== {} ==="
         su runner -c '
             set -e
             cd /work
-            echo "Switched to user: $(whoami)"
-            echo "Running cargo test..."
-            /home/runner/.cargo/bin/cargo test 2>&1
+            {}
         '
-    "#;
+    "#, test_description, test_command);
 
     let mut cmd = Command::new("docker");
     cmd.args([
-        "run",
-        "--rm",
-        "--user", "root",
-        "--entrypoint", "bash",
-        "-v",
-        &format!("{}:/work", work_dir_str),
-        "-w",
-        "/work",
+        "run", "--rm", "--user", "root", "--entrypoint", "bash",
+        "-v", &format!("{}:/work", work_dir_str),
+        "-w", "/work",
         &runner_image,
-        "-c",
-        test_script,
+        "-c", &test_script,
     ]);
 
     let output = match timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
@@ -509,6 +538,7 @@ async fn test_project(
                 success: false,
                 logs: format!("Docker command failed: {}", e),
                 message: None,
+                progress_updates: vec![],
             }));
         }
         Err(_) => {
@@ -516,21 +546,26 @@ async fn test_project(
                 success: false,
                 logs: format!("Tests timed out after {} seconds", timeout_secs),
                 message: None,
+                progress_updates: vec![],
             }));
         }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined_output = format!("{}\n{}", stdout, stderr);
     let logs = format!("status: {:?}\n\nstdout:\n{}\n\nstderr:\n{}", output.status, stdout, stderr);
+
+    let progress_updates = estimate_progress_from_logs(&combined_output, "test");
 
     Ok(Json(TestResponse {
         success: output.status.success(),
         logs,
+        progress_updates,
         message: if output.status.success() {
-            Some("All tests passed! ✅".to_string())
+            Some("Tests passed! ✅".to_string())
         } else {
-            Some("Some tests failed ❌".to_string())
+            Some("Tests failed ❌".to_string())
         },
     }))
 }
@@ -544,66 +579,39 @@ async fn deploy_project(
     State(_state): State<AppState>,
     Json(req): Json<DeployRequest>,
 ) -> Result<Json<DeployResponse>, (StatusCode, String)> {
-    // 1. Decode the WASM from base64
     let wasm_bytes = general_purpose::STANDARD
         .decode(&req.wasm_base64)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid base64 WASM: {}", e)))?;
 
-    // 2. Create temp directory for deployment
     let temp_dir = TempDir::new().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create temp dir: {}", e),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create temp dir: {}", e))
     })?;
 
     let work_dir = temp_dir.path();
     let wasm_path = work_dir.join("contract.wasm");
 
-    // 3. Write WASM file to temp directory
     fs::write(&wasm_path, wasm_bytes).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to write WASM file: {}", e),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write WASM file: {}", e))
     })?;
 
-    // 4. Run deployment in Docker container
     let runner_image = env::var("RUNNER_IMAGE").unwrap_or_else(|_| "soroban-runner".to_string());
-    let timeout_secs: u64 = env::var("DEPLOY_TIMEOUT_SECONDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(600);
-
+    let timeout_secs: u64 = 600;
     let work_dir_str = work_dir.to_string_lossy().to_string();
 
     let deploy_script = format!(r#"
         set -e
-        
         echo "=== Deploying to Stellar {} ==="
-        echo "User: $(whoami)"
-        echo "Workdir: $(pwd)"
-        echo ""
-        
-        # Fix ownership
         chown -R runner:runner /work
         
-        # Switch to runner user for deployment
         su runner -c '
             set -e
             cd /work
-            
-            echo "WASM file info:"
-            ls -lh contract.wasm
-            echo ""
-            
             echo "Generating deployment identity..."
             stellar keys generate deployer --network {} --fund 2>&1 | grep -v "^error" || true
             sleep 5
             
             DEPLOYER_ADDRESS=$(stellar keys address deployer)
             echo "Deployer address: $DEPLOYER_ADDRESS"
-            echo ""
             
             echo "Deploying contract to {}..."
             CONTRACT_ID=$(stellar contract deploy \
@@ -611,37 +619,23 @@ async fn deploy_project(
                 --source deployer \
                 --network {} 2>&1 | tee /tmp/deploy.log | tail -n 1)
             
-            # Check if deployment succeeded
             if echo "$CONTRACT_ID" | grep -qE "^C[A-Z0-9]{{55}}$"; then
                 echo "✅ Contract deployed!"
                 echo "Contract ID: $CONTRACT_ID"
-                echo ""
-                echo "=== Deployment Summary ==="
-                echo "Network: Stellar {}"
-                echo "Contract ID: $CONTRACT_ID"
-                echo "Deployer: $DEPLOYER_ADDRESS"
             else
                 echo "❌ Deployment failed!"
-                echo "Output: $CONTRACT_ID"
-                cat /tmp/deploy.log || true
                 exit 1
             fi
         '
-    "#, req.network, req.network, req.network, req.network, req.network);
+    "#, req.network, req.network, req.network, req.network);
 
     let mut cmd = Command::new("docker");
     cmd.args([
-        "run",
-        "--rm",
-        "--user", "root",
-        "--entrypoint", "bash",
-        "-v",
-        &format!("{}:/work", work_dir_str),
-        "-w",
-        "/work",
+        "run", "--rm", "--user", "root", "--entrypoint", "bash",
+        "-v", &format!("{}:/work", work_dir_str),
+        "-w", "/work",
         &runner_image,
-        "-c",
-        &deploy_script,
+        "-c", &deploy_script,
     ]);
 
     let output = match timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
@@ -651,7 +645,8 @@ async fn deploy_project(
                 success: false,
                 contract_id: None,
                 logs: format!("Docker command failed: {}", e),
-                message: Some("Failed to start deployment container".to_string()),
+                message: Some("Failed to start deployment".to_string()),
+                progress_updates: vec![],
             }));
         }
         Err(_) => {
@@ -660,15 +655,18 @@ async fn deploy_project(
                 contract_id: None,
                 logs: format!("Deployment timed out after {} seconds", timeout_secs),
                 message: Some("Deployment took too long".to_string()),
+                progress_updates: vec![],
             }));
         }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined_logs = format!("status: {:?}\n\nstdout:\n{}\n\nstderr:\n{}", output.status, stdout, stderr);
+    let combined_output = format!("{}\n{}", stdout, stderr);
+    let logs = format!("status: {:?}\n\nstdout:\n{}\n\nstderr:\n{}", output.status, stdout, stderr);
 
-    // 5. Parse contract ID from output
+    let progress_updates = estimate_progress_from_logs(&combined_output, "deploy");
+
     let contract_id = stdout
         .lines()
         .find(|line| line.contains("Contract ID:"))
@@ -690,12 +688,10 @@ async fn deploy_project(
     Ok(Json(DeployResponse {
         success,
         contract_id: contract_id.clone(),
-        logs: combined_logs,
+        logs,
+        progress_updates,
         message: if success {
-            Some(format!(
-                "Contract deployed successfully to {} network!",
-                req.network
-            ))
+            Some(format!("Contract deployed successfully to {} network!", req.network))
         } else {
             Some("Deployment failed. Check logs for details.".to_string())
         },

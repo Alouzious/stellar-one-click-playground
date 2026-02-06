@@ -29,15 +29,19 @@ export async function buildContract(projectId) {
 
 /**
  * Run tests for the contract
+ * @param {string} projectId - Project UUID
+ * @param {string} activeFilePath - Currently open file path (e.g., "/contract/lib.rs")
  */
-export async function testContract(projectId) {
+export async function testContract(projectId, activeFilePath = null) {
   try {
     const response = await fetch(`${API_BASE_URL}/projects/${projectId}/test`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        active_file: activeFilePath, // Send active file to backend
+      }),
     });
 
     if (!response.ok) {
@@ -123,7 +127,7 @@ export function parseBuildLogs(logs) {
       return { type: 'warning', text: trimmed };
     }
     
-    if (trimmed.includes('✅') || trimmed.includes('Success') || trimmed.includes('Finished')) {
+    if (trimmed.includes('Success') || trimmed.includes('Finished')) {
       return { type: 'success', text: trimmed };
     }
     
